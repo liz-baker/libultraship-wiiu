@@ -85,6 +85,31 @@ cmake -S . -Bbuild-android -GNinja \
 cmake --build build-android
 ```
 
+### Wii U
+
+Wii U support is a work in progress. See [docs/wiiu-port-status.md](docs/wiiu-port-status.md)
+for the current state and remaining work.
+
+Requires [devkitPro](https://devkitpro.org/wiki/Getting_Started) with the
+`wiiu-dev` group and the portlibs the core links against:
+
+```
+dkp-pacman -S --needed wiiu-cmake wiiu-pkg-config ppc-tinyxml2 ppc-libzip
+```
+
+Configure with the devkitPro Wii U toolchain (it sets `CMAKE_SYSTEM_NAME` to
+`CafeOS` and defines `__WIIU__`):
+
+```
+cmake --no-warn-unused-cli -H. -Bbuild-wiiu -GNinja \
+  -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/WiiU.cmake \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-wiiu
+```
+
+The GX2 rendering backend is still being ported to the class-based Fast3D API
+and is gated behind `-DLUS_WIIU_GX2=ON` (off by default).
+
 ## License
 LUS is licensed under the [MIT](https://github.com/Kenix3/libultraship/blob/main/LICENSE) license.
 

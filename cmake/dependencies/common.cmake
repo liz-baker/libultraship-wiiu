@@ -27,11 +27,15 @@ target_sources(ImGui
     ${imgui_SOURCE_DIR}/imgui.cpp
 )
 
-target_sources(ImGui
-    PRIVATE
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
-)
+# The Wii U uses its own GX2/WiiU ImGui backends (shipped in src/ship/port/wiiu),
+# so skip the desktop SDL3/OpenGL3 ImGui backends there.
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    target_sources(ImGui
+        PRIVATE
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+    )
+endif()
 
 target_include_directories(ImGui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 
@@ -65,6 +69,11 @@ target_sources(stb PRIVATE
 target_include_directories(stb PUBLIC ${STB_DIR})
 list(APPEND ADDITIONAL_LIB_INCLUDES ${STB_DIR})
 
+# The Wii U (Cafe) toolchain has no usable thread_local storage for stb_image.
+if (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    target_compile_definitions(stb PRIVATE STBI_NO_THREAD_LOCALS)
+endif()
+
 #=================== libgfxd ===================
 if (GFX_DEBUG_DISASSEMBLER)
     FetchContent_Declare(
@@ -94,14 +103,18 @@ if (GFX_DEBUG_DISASSEMBLER)
 endif()
 
 #======== thread-pool ========
-FetchContent_Declare(
-    ThreadPool
-    GIT_REPOSITORY https://github.com/bshoshany/thread-pool.git
-    GIT_TAG v4.1.0
-)
-FetchContent_MakeAvailable(ThreadPool)
+# On the Wii U the thread-pool is fetched and patched separately in wiiu.cmake
+# (it needs a patch to drop thread_local usage), so skip the default here.
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    FetchContent_Declare(
+        ThreadPool
+        GIT_REPOSITORY https://github.com/bshoshany/thread-pool.git
+        GIT_TAG v4.1.0
+    )
+    FetchContent_MakeAvailable(ThreadPool)
 
-list(APPEND ADDITIONAL_LIB_INCLUDES ${threadpool_SOURCE_DIR}/include)
+    list(APPEND ADDITIONAL_LIB_INCLUDES ${threadpool_SOURCE_DIR}/include)
+endif()
 
 #=========== prism ===========
 option(PRISM_STANDALONE "Build prism as a standalone library" OFF)

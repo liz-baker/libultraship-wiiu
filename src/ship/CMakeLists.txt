@@ -31,6 +31,12 @@ target_sources(libultraship PRIVATE ${Source_Files__Audio})
 
 file(GLOB_RECURSE Source_Files__Controller RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "controller/*.cpp")
 
+if (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    # SDL3 is unavailable on the Wii U; the SDL-based physical-device mapping
+    # layer is excluded here and replaced by a native VPAD/KPAD backend.
+    list(FILTER Source_Files__Controller EXCLUDE REGEX "controller/controldevice/controller/mapping/sdl/")
+endif()
+
 source_group("controller" FILES ${Source_Files__Controller})
 target_sources(libultraship PRIVATE ${Source_Files__Controller})
 
@@ -105,6 +111,13 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Android" OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(Source_Files__Port
         ${CMAKE_CURRENT_SOURCE_DIR}/port/mobile/MobileImpl.cpp
     )
+elseif (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    file(GLOB_RECURSE Source_Files__Port RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "port/wiiu/*.cpp")
+    # The GX2 ImGui backends depend on the in-progress GX2 renderer; only build
+    # them when that renderer is enabled (see docs/wiiu-port-status.md).
+    if (NOT LUS_WIIU_GX2)
+        list(FILTER Source_Files__Port EXCLUDE REGEX "port/wiiu/ImGui/")
+    endif()
 endif()
 
 source_group("port" FILES ${Source_Files__Port})
