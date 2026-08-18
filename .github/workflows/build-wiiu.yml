@@ -1,6 +1,10 @@
 name: build-wiiu
+# Only run on PRs and pushes to main. Running on every branch push as well would
+# double-fire for PR branches and hammer the devkitPro package mirror (which
+# rate-limits DB syncs with HTTP 403).
 on:
   push:
+    branches: [main]
   pull_request:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -21,9 +25,19 @@ jobs:
         run: |
           # Portlibs the core links against. SDL is intentionally omitted — it
           # is not available for the Wii U and the port guards it out.
-          dkp-pacman -Syu --noconfirm --needed \
-            wiiu-cmake wiiu-pkg-config \
-            ppc-tinyxml2 ppc-libzip ppc-zlib ppc-bzip2
+          # The devkitPro mirror occasionally returns HTTP 403 on DB sync, so
+          # retry with backoff before giving up.
+          for attempt in 1 2 3 4 5; do
+            if dkp-pacman -Syu --noconfirm --needed \
+                 wiiu-cmake wiiu-pkg-config \
+                 ppc-tinyxml2 ppc-libzip ppc-zlib ppc-bzip2; then
+              exit 0
+            fi
+            echo "dkp-pacman attempt $attempt failed; retrying in $((attempt * 10))s"
+            sleep $((attempt * 10))
+          done
+          echo "dkp-pacman failed after retries" >&2
+          exit 1
       - name: Install Python dependencies
         run: |
           python3 -m pip install -r requirements.txt --break-system-packages \
