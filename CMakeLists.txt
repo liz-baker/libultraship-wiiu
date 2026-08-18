@@ -12,6 +12,10 @@ option(INCLUDE_PROFILING "Enable action and tickable profiling timers" OFF)
 option(COMPONENT_THREAD_SAFE "Enable thread safety for Component parent/child lists" OFF)
 option(DISABLE_DLL_LOADER "Disable dynamic library loading support" OFF)
 option(ENABLE_SCRIPTING "Enable TCC-based C mod compilation and scripting system" OFF)
+# Wii U only: compile the in-progress GX2 renderer / window backend. Off by
+# default while it is ported to the class-based Fast3D API. See
+# docs/wiiu-port-status.md.
+option(LUS_WIIU_GX2 "Build the experimental Wii U GX2 rendering backend" OFF)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     option(SIGN_LIBRARY "Enable xcode signing" OFF)
@@ -101,6 +105,11 @@ endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
     include(cmake/dependencies/openbsd.cmake)
+endif()
+
+# Wii U (Cafe) — devkitPPC/wut toolchain sets CMAKE_SYSTEM_NAME to "CafeOS".
+if(CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    include(cmake/dependencies/wiiu.cmake)
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
