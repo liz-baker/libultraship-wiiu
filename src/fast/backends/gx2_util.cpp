@@ -12,15 +12,9 @@
 
 #include "gx2_shaders/conv.inc"
 
-namespace
-{
+namespace {
 
-const float vertices[][2]= {
-    { -1.0f,  1.0f },
-    { -1.0f, -1.0f },
-    {  1.0f,  1.0f },
-    {  1.0f, -1.0f }
-};
+const float vertices[][2] = { { -1.0f, 1.0f }, { -1.0f, -1.0f }, { 1.0f, 1.0f }, { 1.0f, -1.0f } };
 
 GX2ContextState* contextState = nullptr;
 
@@ -28,8 +22,7 @@ WHBGfxShaderGroup convShader = {};
 
 GX2Sampler sampler = {};
 
-bool CreateColorBufferForSurface(GX2ColorBuffer& colorBuffer, const GX2Surface* surface)
-{
+bool CreateColorBufferForSurface(GX2ColorBuffer& colorBuffer, const GX2Surface* surface) {
     colorBuffer = {};
     colorBuffer.surface = *surface;
     colorBuffer.surface.use |= GX2_SURFACE_USE_COLOR_BUFFER;
@@ -38,8 +31,7 @@ bool CreateColorBufferForSurface(GX2ColorBuffer& colorBuffer, const GX2Surface* 
     GX2InitColorBufferRegs(&colorBuffer);
 
     // Make sure this matches
-    if (colorBuffer.surface.imageSize != surface->imageSize ||
-        colorBuffer.surface.alignment != surface->alignment) {
+    if (colorBuffer.surface.imageSize != surface->imageSize || colorBuffer.surface.alignment != surface->alignment) {
         OSReport("CreateColorBufferForSurface failed\n");
         return false;
     }
@@ -47,8 +39,7 @@ bool CreateColorBufferForSurface(GX2ColorBuffer& colorBuffer, const GX2Surface* 
     return true;
 }
 
-bool CreateTextureForSurface(GX2Texture& texture, const GX2Surface* surface)
-{
+bool CreateTextureForSurface(GX2Texture& texture, const GX2Surface* surface) {
     texture = {};
     texture.surface = *surface;
     texture.surface.use |= GX2_SURFACE_USE_TEXTURE;
@@ -59,8 +50,7 @@ bool CreateTextureForSurface(GX2Texture& texture, const GX2Surface* surface)
     GX2InitTextureRegs(&texture);
 
     // Make sure this matches
-    if (texture.surface.imageSize != surface->imageSize ||
-        texture.surface.alignment != surface->alignment) {
+    if (texture.surface.imageSize != surface->imageSize || texture.surface.alignment != surface->alignment) {
         OSReport("CreateTextureForSurface failed\n");
         return false;
     }
@@ -70,10 +60,9 @@ bool CreateTextureForSurface(GX2Texture& texture, const GX2Surface* surface)
 
 } // namespace
 
-bool GX2Util::Init()
-{
+bool GX2Util::Init() {
     // Set up a custom context state
-    contextState = (GX2ContextState*) memalign(GX2_CONTEXT_STATE_ALIGNMENT, sizeof(GX2ContextState));
+    contextState = (GX2ContextState*)memalign(GX2_CONTEXT_STATE_ALIGNMENT, sizeof(GX2ContextState));
     if (!contextState) {
         return false;
     }
@@ -82,13 +71,8 @@ bool GX2Util::Init()
     GX2SetContextState(contextState);
 
     GX2SetColorControl(GX2_LOGIC_OP_COPY, 0xFF, FALSE, TRUE);
-    GX2SetBlendControl(GX2_RENDER_TARGET_0,
-        GX2_BLEND_MODE_ONE, GX2_BLEND_MODE_ZERO,
-        GX2_BLEND_COMBINE_MODE_ADD,
-        TRUE,
-        GX2_BLEND_MODE_ONE, GX2_BLEND_MODE_ZERO,
-        GX2_BLEND_COMBINE_MODE_ADD
-    );
+    GX2SetBlendControl(GX2_RENDER_TARGET_0, GX2_BLEND_MODE_ONE, GX2_BLEND_MODE_ZERO, GX2_BLEND_COMBINE_MODE_ADD, TRUE,
+                       GX2_BLEND_MODE_ONE, GX2_BLEND_MODE_ZERO, GX2_BLEND_COMBINE_MODE_ADD);
     GX2SetDepthOnlyControl(FALSE, FALSE, GX2_COMPARE_FUNC_ALWAYS);
 
     // Set up shaders
@@ -105,8 +89,7 @@ bool GX2Util::Init()
     return true;
 }
 
-bool GX2Util::Shutdown()
-{
+bool GX2Util::Shutdown() {
     WHBGfxFreeShaderGroup(&convShader);
 
     free(contextState);
@@ -114,8 +97,7 @@ bool GX2Util::Shutdown()
     return true;
 }
 
-bool GX2Util::ConvertSurface(const GX2Surface *src, GX2Surface *dst)
-{
+bool GX2Util::ConvertSurface(const GX2Surface* src, GX2Surface* dst) {
     // Create a texture for the source
     GX2Texture texture;
     if (!CreateTextureForSurface(texture, src)) {

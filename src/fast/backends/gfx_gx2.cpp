@@ -389,7 +389,8 @@ static void gfx_gx2_set_zmode_decal(bool zmode_decal) {
             // no vanishing paths
             case 2:
                 if (current_framebuffer < used_framebuffers) {
-                    SSDB = -1.0f * (float)framebuffers[current_framebuffer].color_buffer.surface.height / noVanishFactor;
+                    SSDB =
+                        -1.0f * (float)framebuffers[current_framebuffer].color_buffer.surface.height / noVanishFactor;
                 }
                 break;
             // disabled
@@ -730,7 +731,7 @@ void gfx_gx2_clear_framebuffer(bool color, bool depth) {
 
     if (depth) {
         GX2ClearDepthStencilEx(&buffer.depth_buffer, buffer.depth_buffer.depthClear, buffer.depth_buffer.stencilClear,
-                            GX2_CLEAR_FLAGS_BOTH);
+                               GX2_CLEAR_FLAGS_BOTH);
     }
 
     gfx_wiiu_set_context_state();
@@ -804,7 +805,7 @@ void gfx_gx2_read_framebuffer_to_cpu(int fb_id, uint32_t width, uint32_t height,
     surface.height = height;
     surface.depth = 1;
     surface.mipLevels = 1;
-    surface.format = GX2_SURFACE_FORMAT_UNORM_A1_B5_G5_R5; //GX2_SURFACE_FORMAT_UNORM_R5_G5_B5_A1;
+    surface.format = GX2_SURFACE_FORMAT_UNORM_A1_B5_G5_R5; // GX2_SURFACE_FORMAT_UNORM_R5_G5_B5_A1;
     surface.aa = GX2_AA_MODE1X;
     surface.tileMode = GX2_TILE_MODE_LINEAR_ALIGNED;
     GX2CalcSurfaceSizeAndAlignment(&surface);
@@ -818,7 +819,7 @@ void gfx_gx2_read_framebuffer_to_cpu(int fb_id, uint32_t width, uint32_t height,
     gfx_wiiu_set_context_state();
 
     for (int y = 0; y < height; y++) {
-        memcpy(rgba16_buf + y * width, ((uint16_t*) surface.image) + y * surface.pitch, width * 2);
+        memcpy(rgba16_buf + y * width, ((uint16_t*)surface.image) + y * surface.pitch, width * 2);
     }
 
     free(surface.image);
