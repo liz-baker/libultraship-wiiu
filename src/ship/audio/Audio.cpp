@@ -27,9 +27,11 @@ void Audio::InitAudioPlayer() {
             mAudioPlayer = std::make_shared<CoreAudioAudioPlayer>(this->mAudioSettings);
             break;
 #endif
+#ifndef __WIIU__
         case AudioBackend::SDL:
             mAudioPlayer = std::make_shared<SDLAudioPlayer>(this->mAudioSettings);
             break;
+#endif
         default:
             mAudioPlayer = std::make_shared<NullAudioPlayer>(this->mAudioSettings);
             break;
