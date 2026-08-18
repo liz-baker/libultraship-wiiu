@@ -1,0 +1,46 @@
+name: build-wiiu
+on:
+  push:
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-wiiu:
+    runs-on: ubuntu-latest
+    # The official devkitPro image ships the devkitPPC/wut toolchain and the
+    # WiiU CMake toolchain file used to cross-compile for the console.
+    container:
+      image: devkitpro/devkitppc:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Wii U dependencies
+        run: |
+          # Portlibs the core links against. SDL is intentionally omitted — it
+          # is not available for the Wii U and the port guards it out.
+          dkp-pacman -Syu --noconfirm --needed \
+            wiiu-cmake wiiu-pkg-config \
+            ppc-tinyxml2 ppc-libzip ppc-zlib ppc-bzip2
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install -r requirements.txt --break-system-packages \
+            || python3 -m pip install -r requirements.txt \
+            || pip3 install -r requirements.txt --break-system-packages \
+            || true
+      - name: Configure
+        run: |
+          source /etc/profile.d/devkit-env.sh || true
+          export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}
+          cmake --no-warn-unused-cli -H. -Bbuild-wiiu -GNinja \
+            -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/WiiU.cmake \
+            -DCMAKE_BUILD_TYPE:STRING=Release
+      - name: Build
+        run: |
+          export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}
+          cmake --build build-wiiu --config Release --parallel
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: libultraship-wiiu
+          path: build-wiiu/src/*.a
+          if-no-files-found: warn
