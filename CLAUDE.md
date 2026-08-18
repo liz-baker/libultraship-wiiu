@@ -5,6 +5,32 @@ Working notes for this fork of libultraship. This fork tracks upstream
 [`docs/wiiu-port-status.md`](docs/wiiu-port-status.md) for the port design and
 remaining work.
 
+## Wii U port TO-DO
+
+Roadmap to a working Wii U build, in dependency order. Keep this list current as
+phases land.
+
+- [ ] **Phase A — Guard SDL3 out so the core compiles for Wii U.** SDL3 is not
+  available on the Wii U. Guard it out of the always-compiled layers on
+  `CafeOS`: the Fast3D GUI/window layer (`Fast3dGui.h/.cpp`, `Fast3dWindow.cpp`
+  and its SDL/DXGI/Metal/OpenGL desktop-backend paths) and the ship subsystems
+  (`SDLAudioPlayer`, `Controller.cpp`, the physical-device manager,
+  `ControllerDefaultMappings`, `CrashHandler`). Stub where guarded symbols are
+  referenced unconditionally so the library links. *Goal: the `build-wiiu`
+  compile step goes green.*
+- [ ] **Phase B — Convert the GX2 backends to the class-based Fast3D API**
+  (the `LUS_WIIU_GX2` code). `gfx_gx2` → `GfxRenderingAPIGX2 : GfxRenderingAPI`,
+  `gfx_wiiu` → `GfxWindowBackendWiiU : GfxWindowBackend`; fix renamed includes;
+  add `FAST3D_GX2` to the `WindowBackend` enum and wire it into `Fast3dWindow` /
+  `Fast3dGui`; port the GX2 ImGui backends to the current ImGui.
+- [ ] **Phase C — Native input/audio.** Wire native VPAD/KPAD input into the
+  controller layer (a Wii U physical-device backend replacing the SDL mapping)
+  and add a native AX audio player, so the build is functional, not just
+  compiling.
+- [ ] **Phase D — Finalize CI.** Remove `continue-on-error` from the
+  `build-wiiu` compile step and re-enable the desktop `build-validation` /
+  `test-validation` PR triggers (see the revert checklist below).
+
 ## ⚠️ Temporary CI changes to revert before finishing the Wii U port
 
 While the Wii U port is in progress, PR CI is intentionally kept focused on the
