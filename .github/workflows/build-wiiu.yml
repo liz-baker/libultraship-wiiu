@@ -25,16 +25,23 @@ jobs:
         run: |
           # Portlibs the core links against. SDL is intentionally omitted — it
           # is not available for the Wii U and the port guards it out.
-          # The devkitPro mirror occasionally returns HTTP 403 on DB sync, so
-          # retry with backoff before giving up.
+          #
+          # The devkitPro mirror frequently returns HTTP 403 when syncing the
+          # package databases (dkp-*.db) from GitHub Actions. The image already
+          # ships a populated pacman DB, so first try installing WITHOUT a DB
+          # sync (-S, no -y) which only fetches the package files. Fall back to
+          # a full sync with backoff only if a package is missing locally.
+          PKGS="wiiu-cmake wiiu-pkg-config ppc-tinyxml2 ppc-libzip ppc-zlib ppc-bzip2"
+          if dkp-pacman -S --needed --noconfirm $PKGS; then
+            exit 0
+          fi
+          echo "Install without DB sync failed; falling back to synced install"
           for attempt in 1 2 3 4 5; do
-            if dkp-pacman -Syu --noconfirm --needed \
-                 wiiu-cmake wiiu-pkg-config \
-                 ppc-tinyxml2 ppc-libzip ppc-zlib ppc-bzip2; then
+            if dkp-pacman -Syu --needed --noconfirm $PKGS; then
               exit 0
             fi
-            echo "dkp-pacman attempt $attempt failed; retrying in $((attempt * 10))s"
-            sleep $((attempt * 10))
+            echo "dkp-pacman sync attempt $attempt failed; retrying in $((attempt * 15))s"
+            sleep $((attempt * 15))
           done
           echo "dkp-pacman failed after retries" >&2
           exit 1
