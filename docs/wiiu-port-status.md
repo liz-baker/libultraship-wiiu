@@ -47,11 +47,18 @@ unavailable on `CafeOS`:
 - **CI** — `.github/workflows/build-wiiu.yml` cross-compiles inside the
   `devkitpro/devkitppc` container.
 
+## Status
+
+**Phase A is complete.** The core `libultraship.a` compiles and links end to end
+for `CafeOS` (GX2 renderer gated behind `LUS_WIIU_GX2`, off by default), and the
+`build-wiiu` CI compile is now a blocking check. SDL3 is fully guarded out of the
+always-compiled layers.
+
 ## Remaining work
 
 The GX2 renderer / window backend are still written against the old C
 struct-of-function-pointers Fast3D API. They are compiled only when
-`-DLUS_WIIU_GX2=ON` is passed, so the rest of the port can be brought to a
+`-DLUS_WIIU_GX2=ON` is passed, so the rest of the port was brought to a
 clean compile first. Outstanding items:
 
 1. Convert `gfx_gx2` to a `GfxRenderingAPIGX2 : public Fast::GfxRenderingAPI`

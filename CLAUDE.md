@@ -10,14 +10,12 @@ remaining work.
 Roadmap to a working Wii U build, in dependency order. Keep this list current as
 phases land.
 
-- [ ] **Phase A — Guard SDL3 out so the core compiles for Wii U.** SDL3 is not
-  available on the Wii U. Guard it out of the always-compiled layers on
-  `CafeOS`: the Fast3D GUI/window layer (`Fast3dGui.h/.cpp`, `Fast3dWindow.cpp`
-  and its SDL/DXGI/Metal/OpenGL desktop-backend paths) and the ship subsystems
-  (`SDLAudioPlayer`, `Controller.cpp`, the physical-device manager,
-  `ControllerDefaultMappings`, `CrashHandler`). Stub where guarded symbols are
-  referenced unconditionally so the library links. *Goal: the `build-wiiu`
-  compile step goes green.*
+- [x] **Phase A — Guard SDL3 out so the core compiles for Wii U.** Done: the
+  core `libultraship.a` compiles and links end to end for `CafeOS` (GX2 renderer
+  gated behind `LUS_WIIU_GX2`, off). SDL3 is guarded out of the always-compiled
+  layers — the Fast3D GUI/window layer, audio (falls back to the null player),
+  the controller/physical-device layer and mapping factories, the libultra OS
+  shim, and the crash handler. The `build-wiiu` compile step is now blocking.
 - [ ] **Phase B — Convert the GX2 backends to the class-based Fast3D API**
   (the `LUS_WIIU_GX2` code). `gfx_gx2` → `GfxRenderingAPIGX2 : GfxRenderingAPI`,
   `gfx_wiiu` → `GfxWindowBackendWiiU : GfxWindowBackend`; fix renamed includes;
@@ -44,10 +42,9 @@ ready (or whenever full PR validation is wanted again):
    runs on all pushes and PRs again.
 2. **`.github/workflows/test-validation.yml`** — same change as above.
    *Restore:* same as above.
-3. **`.github/workflows/build-wiiu.yml`** — the `Build (work in progress)` step
-   is `continue-on-error: true` so the validated toolchain/dependency configure
-   can land while the port is finished. *Restore:* remove `continue-on-error`
-   once the Wii U library compiles end to end, so the compile becomes blocking.
+3. ~~**`.github/workflows/build-wiiu.yml`** — the build step was
+   `continue-on-error`.~~ Done (Phase A): the Wii U library compiles and links
+   end to end, so the `Build` step is now blocking.
 4. **`.github/workflows/tidy-format-validation.yml`** — `src/ship/port/wiiu/*`
    is excluded from the clang-tidy-diff step because those files include
    devkitPPC-only headers unavailable on the Linux tidy host. This exclusion is

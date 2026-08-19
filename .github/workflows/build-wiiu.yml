@@ -58,14 +58,11 @@ jobs:
           cmake --no-warn-unused-cli -H. -Bbuild-wiiu -GNinja \
             -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/WiiU.cmake \
             -DCMAKE_BUILD_TYPE:STRING=Release
-      # NOTE: the compile does not yet succeed end to end. The remaining SDL3
-      # guarding and the GX2 renderer's conversion to the class-based Fast3D API
-      # are tracked in docs/wiiu-port-status.md. This step is marked
-      # continue-on-error so the validated toolchain/dependency wiring above can
-      # land while the port is finished; flip it to blocking once the Wii U
-      # library compiles.
-      - name: Build (work in progress)
-        continue-on-error: true
+      # The core Wii U library (with the GX2 renderer gated behind LUS_WIIU_GX2)
+      # now compiles and links end to end, so this step is blocking. The GX2
+      # renderer conversion and native input/audio are tracked in
+      # docs/wiiu-port-status.md.
+      - name: Build
         run: |
           export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}
           cmake --build build-wiiu --config Release --parallel
@@ -74,4 +71,4 @@ jobs:
         with:
           name: libultraship-wiiu
           path: build-wiiu/src/*.a
-          if-no-files-found: warn
+          if-no-files-found: error
