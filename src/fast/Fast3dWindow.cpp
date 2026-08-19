@@ -8,8 +8,6 @@
 #include "ship/resource/ResourceManager.h"
 #include "fast/interpreter.h"
 #ifndef __WIIU__
-// Desktop window/rendering backends. These headers reference SDL/D3D/Metal
-// types that are unavailable on the Wii U, which uses the GX2 backend instead.
 #include "fast/backends/gfx_sdl.h"
 #include "fast/backends/gfx_dxgi.h"
 #include "fast/backends/gfx_opengl.h"

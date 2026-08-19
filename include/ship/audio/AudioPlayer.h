@@ -163,8 +163,6 @@ class AudioPlayer {
 #endif
 
 #ifndef __WIIU__
-// SDL3 is unavailable on the Wii U; it falls back to the null audio player
-// until a native AX backend lands.
 #include "SDLAudioPlayer.h"
 #endif
 #include "NullAudioPlayer.h"

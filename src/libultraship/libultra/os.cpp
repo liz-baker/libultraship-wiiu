@@ -21,8 +21,6 @@ int32_t osContInit(OSMesgQueue* mq, uint8_t* controllerBits, OSContStatus* statu
     status->status |= 1;
 
 #ifndef __WIIU__
-    // SDL gamepad setup. On the Wii U (no SDL) input comes from the native
-    // VPAD/KPAD backend instead.
     std::string controllerDb = Ship::Context::LocateFileAcrossAppDirs("gamecontrollerdb.txt");
     int mappingsAdded = SDL_AddGamepadMappingsFromFile(controllerDb.c_str());
     if (mappingsAdded >= 0) {

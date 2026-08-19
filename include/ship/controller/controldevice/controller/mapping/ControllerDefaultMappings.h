@@ -7,10 +7,6 @@
 #ifndef __WIIU__
 #include <SDL3/SDL.h>
 #else
-// SDL3 is unavailable on the Wii U. These gamepad enums are only used as map
-// key/value types in the default-mapping tables (which are empty on Wii U), so
-// alias them to int to let the interface compile. A native VPAD/KPAD mapping
-// backend replaces the SDL defaults at runtime.
 typedef int SDL_GamepadButton;
 typedef int SDL_GamepadAxis;
 #endif

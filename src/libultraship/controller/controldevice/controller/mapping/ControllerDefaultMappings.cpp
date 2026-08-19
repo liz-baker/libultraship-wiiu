@@ -69,8 +69,6 @@ void ControllerDefaultMappings::SetDefaultSDLButtonToButtonMappings(
     }
 
 #ifndef __WIIU__
-    // SDL gamepad button defaults. Empty on the Wii U (no SDL); the native
-    // VPAD/KPAD backend supplies its own defaults.
     Ship::ControllerDefaultMappings::SetDefaultSDLButtonToButtonMappings({
         { BTN_A, { SDL_GAMEPAD_BUTTON_SOUTH } },
         { BTN_B, { SDL_GAMEPAD_BUTTON_EAST } },
@@ -94,7 +92,6 @@ void ControllerDefaultMappings::SetDefaultSDLAxisDirectionToButtonMappings(
     }
 
 #ifndef __WIIU__
-    // SDL gamepad axis defaults. Empty on the Wii U (no SDL).
     Ship::ControllerDefaultMappings::SetDefaultSDLAxisDirectionToButtonMappings({
         { BTN_R, { { SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1 } } },
         { BTN_Z, { { SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1 } } },

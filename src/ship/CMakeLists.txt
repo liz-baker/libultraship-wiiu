@@ -25,8 +25,6 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
-    # SDL3 is unavailable on the Wii U; it uses the null audio player until a
-    # native AX backend lands.
     list(FILTER Source_Files__Audio EXCLUDE REGEX "audio/SDLAudioPlayer.*")
 endif()
 
@@ -38,8 +36,6 @@ target_sources(libultraship PRIVATE ${Source_Files__Audio})
 file(GLOB_RECURSE Source_Files__Controller RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "controller/*.cpp")
 
 if (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
-    # SDL3 is unavailable on the Wii U; the SDL-based physical-device mapping
-    # layer is excluded here and replaced by a native VPAD/KPAD backend.
     list(FILTER Source_Files__Controller EXCLUDE REGEX "controller/controldevice/controller/mapping/sdl/")
 endif()
 

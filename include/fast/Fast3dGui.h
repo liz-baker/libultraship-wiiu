@@ -1,7 +1,5 @@
 #pragma once
 #ifndef __WIIU__
-// SDL3 is unavailable on the Wii U; the SDL-backed union members below fall back
-// to void* there.
 #include <SDL3/SDL.h>
 #endif
 #include "ship/window/gui/Gui.h"
@@ -48,7 +46,7 @@ typedef struct {
 #ifndef __WIIU__
             SDL_Renderer* Renderer; ///< SDL_Renderer* (for Metal layer)
 #else
-            void* Renderer; ///< Unused on Wii U (no SDL).
+            void* Renderer;
 #endif
         } Metal;
         struct {

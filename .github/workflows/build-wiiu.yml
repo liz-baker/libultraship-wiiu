@@ -23,8 +23,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Wii U dependencies
         run: |
-          # Portlibs the core links against. SDL is intentionally omitted — it
-          # is not available for the Wii U and the port guards it out.
+          # Portlibs the core links against.
           #
           # The devkitPro mirror frequently returns HTTP 403 when syncing the
           # package databases (dkp-*.db) from GitHub Actions. The image already

@@ -113,8 +113,6 @@ void ControllerDefaultMappings::SetDefaultSDLAxisDirectionToAxisDirectionMapping
     }
 
 #ifndef __WIIU__
-    // SDL gamepad axis defaults. On the Wii U (no SDL) the table stays empty;
-    // the native VPAD/KPAD backend supplies its own mappings.
     mDefaultSDLAxisDirectionToAxisDirectionMappings[LEFT_STICK] = {
         { LEFT, { SDL_GAMEPAD_AXIS_LEFTX, -1 } },
         { RIGHT, { SDL_GAMEPAD_AXIS_LEFTX, 1 } },
