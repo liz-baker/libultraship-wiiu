@@ -2,6 +2,7 @@
 
 extern "C" {
 
+#ifndef __WIIU__
 Uint32 __lusViCallback(void* userdata, SDL_TimerID timerId, Uint32 interval) {
     __OSEventState* es = &__osEventStateTab[OS_EVENT_VI];
 
@@ -11,9 +12,14 @@ Uint32 __lusViCallback(void* userdata, SDL_TimerID timerId, Uint32 interval) {
 
     return interval;
 }
+#endif
 
 void osCreateViManager(OSPri pri) {
+#ifndef __WIIU__
+    // SDL timer drives the VI event. The Wii U will use a native timer once its
+    // input/timing backend lands.
     SDL_AddTimer(16, &__lusViCallback, NULL);
+#endif
 }
 
 void osViSetEvent(OSMesgQueue* queue, OSMesg mesg, uint32_t c) {

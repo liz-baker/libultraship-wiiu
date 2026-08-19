@@ -4,7 +4,14 @@
 #include <unordered_set>
 #include <vector>
 #include <string>
+#ifndef __WIIU__
 #include <SDL3/SDL.h>
+#else
+// SDL3 is unavailable on the Wii U; SDL_Gamepad is only used as an opaque
+// pointer here, so a forward declaration is enough for the header to compile.
+// A native VPAD/KPAD device backend replaces this at runtime.
+typedef struct SDL_Gamepad SDL_Gamepad;
+#endif
 
 namespace Ship {
 
