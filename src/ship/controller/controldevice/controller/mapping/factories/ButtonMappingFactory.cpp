@@ -25,6 +25,7 @@ std::shared_ptr<ControllerButtonMapping> ButtonMappingFactory::CreateButtonMappi
         return nullptr;
     }
 
+#ifndef __WIIU__
     if (mappingClass == "SDLButtonToButtonMapping") {
         int32_t sdlControllerButton = consoleVariable->GetInteger(
             StringHelper::Sprintf("%s.SDLControllerButton", mappingCvarKey.c_str()).c_str(), -1);
@@ -54,6 +55,7 @@ std::shared_ptr<ControllerButtonMapping> ButtonMappingFactory::CreateButtonMappi
         return std::make_shared<SDLAxisDirectionToButtonMapping>(portIndex, bitmask, sdlControllerAxis, axisDirection,
                                                                  controlDeck, consoleVariable);
     }
+#endif
 
     if (mappingClass == "KeyboardKeyToButtonMapping") {
         int32_t scancode = consoleVariable->GetInteger(
@@ -104,6 +106,7 @@ ButtonMappingFactory::CreateDefaultSDLButtonMappings(uint8_t portIndex, CONTROLL
                                                      std::shared_ptr<ControlDeck> controlDeck) {
     std::vector<std::shared_ptr<ControllerButtonMapping>> mappings;
 
+#ifndef __WIIU__
     auto defaultButtonsForBitmask =
         controlDeck->GetControllerDefaultMappings()->GetDefaultSDLButtonToButtonMappings()[bitmask];
 
@@ -119,6 +122,7 @@ ButtonMappingFactory::CreateDefaultSDLButtonMappings(uint8_t portIndex, CONTROLL
         mappings.push_back(std::make_shared<SDLAxisDirectionToButtonMapping>(
             portIndex, bitmask, sdlGamepadAxis, axisDirection, controlDeck, consoleVariable));
     }
+#endif
 
     return mappings;
 }
@@ -129,6 +133,7 @@ ButtonMappingFactory::CreateButtonMappingFromSDLInput(uint8_t portIndex, CONTROL
                                                       std::shared_ptr<ControlDeck> controlDeck) {
     std::shared_ptr<ControllerButtonMapping> mapping = nullptr;
 
+#ifndef __WIIU__
     for (auto [instanceId, gamepad] :
          controlDeck->GetConnectedPhysicalDeviceManager()->GetConnectedSDLGamepadsForPort(portIndex)) {
         for (int32_t button = SDL_GAMEPAD_BUTTON_SOUTH; button < SDL_GAMEPAD_BUTTON_COUNT; button++) {
@@ -162,6 +167,7 @@ ButtonMappingFactory::CreateButtonMappingFromSDLInput(uint8_t portIndex, CONTROL
             break;
         }
     }
+#endif
 
     return mapping;
 }

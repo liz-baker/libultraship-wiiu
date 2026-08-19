@@ -25,10 +25,12 @@ RumbleMappingFactory::CreateRumbleMappingFromConfig(uint8_t portIndex, std::stri
         return nullptr;
     }
 
+#ifndef __WIIU__
     if (mappingClass == "SDLRumbleMapping") {
         return std::make_shared<SDLRumbleMapping>(portIndex, lowFrequencyIntensityPercentage,
                                                   highFrequencyIntensityPercentage, controlDeck, consoleVariable);
     }
+#endif
 
     return nullptr;
 }
@@ -41,9 +43,12 @@ RumbleMappingFactory::CreateDefaultSDLRumbleMappings(PhysicalDeviceType physical
         return {};
     }
 
-    std::vector<std::shared_ptr<ControllerRumbleMapping>> mappings = { std::make_shared<SDLRumbleMapping>(
-        portIndex, DEFAULT_LOW_FREQUENCY_RUMBLE_PERCENTAGE, DEFAULT_HIGH_FREQUENCY_RUMBLE_PERCENTAGE, controlDeck,
-        consoleVariable) };
+    std::vector<std::shared_ptr<ControllerRumbleMapping>> mappings;
+#ifndef __WIIU__
+    mappings.push_back(std::make_shared<SDLRumbleMapping>(portIndex, DEFAULT_LOW_FREQUENCY_RUMBLE_PERCENTAGE,
+                                                          DEFAULT_HIGH_FREQUENCY_RUMBLE_PERCENTAGE, controlDeck,
+                                                          consoleVariable));
+#endif
 
     return mappings;
 }
@@ -52,6 +57,7 @@ std::shared_ptr<ControllerRumbleMapping> RumbleMappingFactory::CreateRumbleMappi
     uint8_t portIndex, std::shared_ptr<ConsoleVariable> consoleVariable, std::shared_ptr<ControlDeck> controlDeck) {
     std::shared_ptr<ControllerRumbleMapping> mapping = nullptr;
 
+#ifndef __WIIU__
     for (auto [instanceId, gamepad] :
          controlDeck->GetConnectedPhysicalDeviceManager()->GetConnectedSDLGamepadsForPort(portIndex)) {
         if (!SDL_GetBooleanProperty(SDL_GetGamepadProperties(gamepad), SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false)) {
@@ -91,6 +97,7 @@ std::shared_ptr<ControllerRumbleMapping> RumbleMappingFactory::CreateRumbleMappi
             break;
         }
     }
+#endif
 
     return mapping;
 }

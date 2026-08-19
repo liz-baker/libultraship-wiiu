@@ -21,6 +21,7 @@ GyroMappingFactory::CreateGyroMappingFromConfig(uint8_t portIndex, std::string i
         return nullptr;
     }
 
+#ifndef __WIIU__
     if (mappingClass == "SDLGyroMapping") {
         float neutralPitch =
             consoleVariable->GetFloat(StringHelper::Sprintf("%s.NeutralPitch", mappingCvarKey.c_str()).c_str(), 0.0f);
@@ -32,6 +33,7 @@ GyroMappingFactory::CreateGyroMappingFromConfig(uint8_t portIndex, std::string i
         return std::make_shared<SDLGyroMapping>(portIndex, sensitivity, neutralPitch, neutralYaw, neutralRoll,
                                                 controlDeck, consoleVariable);
     }
+#endif
 
     return nullptr;
 }
@@ -41,6 +43,7 @@ GyroMappingFactory::CreateGyroMappingFromSDLInput(uint8_t portIndex, std::shared
                                                   std::shared_ptr<ControlDeck> controlDeck) {
     std::shared_ptr<ControllerGyroMapping> mapping = nullptr;
 
+#ifndef __WIIU__
     for (auto [instanceId, gamepad] :
          controlDeck->GetConnectedPhysicalDeviceManager()->GetConnectedSDLGamepadsForPort(portIndex)) {
         if (!SDL_GamepadHasSensor(gamepad, SDL_SENSOR_GYRO)) {
@@ -79,6 +82,7 @@ GyroMappingFactory::CreateGyroMappingFromSDLInput(uint8_t portIndex, std::shared
             break;
         }
     }
+#endif
 
     return mapping;
 }
