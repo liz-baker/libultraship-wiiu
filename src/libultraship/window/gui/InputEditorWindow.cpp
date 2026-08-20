@@ -186,6 +186,7 @@ void InputEditorWindow::GetButtonColorsForPhysicalDeviceType(Ship::PhysicalDevic
             buttonHoveredColor = BUTTON_COLOR_MOUSE_BEIGE_HOVERED;
             break;
         case Ship::PhysicalDeviceType::SDLGamepad:
+        case Ship::PhysicalDeviceType::WiiUGamepad:
             buttonColor = BUTTON_COLOR_GAMEPAD_BLUE;
             buttonHoveredColor = BUTTON_COLOR_GAMEPAD_BLUE_HOVERED;
             break;
@@ -1159,7 +1160,7 @@ void InputEditorWindow::DrawDeviceToggles(uint8_t portIndex) {
         ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
         auto buttonColor = ImGui::GetStyleColorVec4(ImGuiCol_Button);
         auto buttonHoveredColor = ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered);
-        GetButtonColorsForPhysicalDeviceType(Ship::PhysicalDeviceType::SDLGamepad, buttonColor, buttonHoveredColor);
+        GetButtonColorsForPhysicalDeviceType(PHYSICAL_DEVICE_TYPE_GAMEPAD, buttonColor, buttonHoveredColor);
         ImGui::PushStyleColor(ImGuiCol_Button, buttonColor);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, buttonHoveredColor);
         auto notIgnored = !connectedDeviceManager->PortIsIgnoringInstanceId(portIndex, instanceId);
@@ -1318,7 +1319,7 @@ void InputEditorWindow::DrawSetDefaultsButton(uint8_t portIndex) {
 
         auto buttonColor = ImGui::GetStyleColorVec4(ImGuiCol_Button);
         auto buttonHoveredColor = ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered);
-        GetButtonColorsForPhysicalDeviceType(Ship::PhysicalDeviceType::SDLGamepad, buttonColor, buttonHoveredColor);
+        GetButtonColorsForPhysicalDeviceType(PHYSICAL_DEVICE_TYPE_GAMEPAD, buttonColor, buttonHoveredColor);
         ImGui::PushStyleColor(ImGuiCol_Button, buttonColor);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, buttonHoveredColor);
         if (ImGui::Button(StringHelper::Sprintf("%s %s", ICON_FA_GAMEPAD, "Gamepad (SDL)").c_str())) {
@@ -1335,8 +1336,8 @@ void InputEditorWindow::DrawSetDefaultsButton(uint8_t portIndex) {
             }
             if (ImGui::Button("Set defaults")) {
                 mControlDeck->GetControllerByPort(portIndex)->ClearAllMappingsForDeviceType(
-                    Ship::PhysicalDeviceType::SDLGamepad);
-                mControlDeck->GetControllerByPort(portIndex)->AddDefaultMappings(Ship::PhysicalDeviceType::SDLGamepad);
+                    PHYSICAL_DEVICE_TYPE_GAMEPAD);
+                mControlDeck->GetControllerByPort(portIndex)->AddDefaultMappings(PHYSICAL_DEVICE_TYPE_GAMEPAD);
                 shouldClose = true;
                 ImGui::CloseCurrentPopup();
             }

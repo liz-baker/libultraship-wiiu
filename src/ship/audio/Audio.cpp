@@ -4,6 +4,10 @@
 #include "ship/audio/CoreAudioAudioPlayer.h"
 #endif
 
+#ifdef __WIIU__
+#include "ship/audio/WiiUAudioPlayer.h"
+#endif
+
 #include <stdexcept>
 #include "ship/core/Context.h"
 #include "ship/config/Config.h"
@@ -31,6 +35,10 @@ void Audio::InitAudioPlayer() {
         case AudioBackend::SDL:
             mAudioPlayer = std::make_shared<SDLAudioPlayer>(this->mAudioSettings);
             break;
+#else
+        case AudioBackend::AX:
+            mAudioPlayer = std::make_shared<WiiUAudioPlayer>(this->mAudioSettings);
+            break;
 #endif
         default:
             mAudioPlayer = std::make_shared<NullAudioPlayer>(this->mAudioSettings);
@@ -52,7 +60,12 @@ void Audio::OnInit(const nlohmann::json& /*initArgs*/) {
 #ifdef __APPLE__
     mAvailableAudioBackends->push_back(AudioBackend::COREAUDIO);
 #endif
+#ifdef __WIIU__
+    // SDL is not available for the Wii U; AX is the console's native mixer.
+    mAvailableAudioBackends->push_back(AudioBackend::AX);
+#else
     mAvailableAudioBackends->push_back(AudioBackend::SDL);
+#endif
     mAvailableAudioBackends->push_back(AudioBackend::NUL);
 
     SetAudioChannels(GetSavedAudioChannelsSetting());
@@ -86,7 +99,17 @@ AudioBackend Audio::GetSavedAudioBackend() {
     }
 
     if (backendName == "sdl") {
+#ifdef __WIIU__
+        // A config carried over from a desktop build names a backend the console
+        // cannot open; fall through to the platform default rather than to null.
+        return AudioBackend::AX;
+#else
         return AudioBackend::SDL;
+#endif
+    }
+
+    if (backendName == "ax") {
+        return AudioBackend::AX;
     }
 
     if (backendName == "null") {
@@ -103,7 +126,11 @@ AudioBackend Audio::GetSavedAudioBackend() {
     return AudioBackend::COREAUDIO;
 #endif
 
+#ifdef __WIIU__
+    return AudioBackend::AX;
+#else
     return AudioBackend::SDL;
+#endif
 }
 
 void Audio::SetCurrentAudioBackend(AudioBackend backend) {
@@ -119,6 +146,9 @@ void Audio::SetCurrentAudioBackend(AudioBackend backend) {
             break;
         case AudioBackend::SDL:
             config->SetString("Window.AudioBackend", "sdl");
+            break;
+        case AudioBackend::AX:
+            config->SetString("Window.AudioBackend", "ax");
             break;
         case AudioBackend::NUL:
             config->SetString("Window.AudioBackend", "null");

@@ -25,10 +25,12 @@ phases land.
   `LUS_WIIU_GX2` scaffolding option was dropped — the backend now builds
   unconditionally on `CafeOS` — and the single blocking `build-wiiu` CI job
   covers it.
-- [ ] **Phase C — Native input/audio.** Wire native VPAD/KPAD input into the
-  controller layer (a Wii U physical-device backend replacing the SDL mapping)
-  and add a native AX audio player, so the build is functional, not just
-  compiling.
+- [x] **Phase C — Native input/audio.** Done: `PhysicalDeviceType::WiiUGamepad`
+  and a `mapping/wiiu/` backend (button / axis-direction / rumble mappings) feed
+  the controller layer from a normalized VPAD + KPAD input layer
+  (`ship/port/wiiu/WiiUInput.h`), with built-in Wii U defaults; audio plays
+  through a native AX player (`AudioBackend::AX`). Not yet covered: DRC gyro and
+  the touch screen, and the port has still not been run on hardware.
 - [ ] **Phase D — Finalize CI.** Re-enable the desktop `build-validation` /
   `test-validation` PR triggers (see the revert checklist below). The
   `build-wiiu` compile step is already blocking and already covers the GX2
@@ -77,7 +79,12 @@ cmake --build build-wiiu
 - The devkitPro Wii U toolchain sets `CMAKE_SYSTEM_NAME=CafeOS` and defines
   `__WIIU__`; guard Wii U-only code with `CafeOS` in CMake and `__WIIU__` in C/C++.
 - SDL3 is **not** available for the Wii U. It is guarded out on `CafeOS`; input
-  is native VPAD/KPAD (`src/ship/port/wiiu/WiiUImpl.cpp`).
+  is native VPAD/KPAD (`src/ship/port/wiiu/WiiUImpl.cpp`, normalized for the
+  mapping layer by `WiiUInput.cpp`) and audio is native AX
+  (`src/ship/audio/WiiUAudioPlayer.cpp`).
+- Platform-agnostic code that means "the gamepad" should use the
+  `PHYSICAL_DEVICE_TYPE_GAMEPAD` macro rather than naming `SDLGamepad`, so it
+  resolves to `WiiUGamepad` on the console.
 - The GX2 renderer / window backend build unconditionally on `CafeOS`. They
   implement the class-based `GfxRenderingAPI` / `GfxWindowBackend` interfaces and
   select the `FAST3D_GX2` window backend, which is the only backend available on
