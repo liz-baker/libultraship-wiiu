@@ -22,7 +22,7 @@
 #define _LANGUAGE_C
 #endif
 #include "libultraship/libultra/gbi.h"
-#include <public/bridge/consolevariablebridge.h>
+#include "libultraship/bridge/consolevariablebridge.h"
 
 #include "fast/interpreter.h"
 #include "fast/backends/gfx_wiiu.h"

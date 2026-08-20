@@ -289,7 +289,7 @@ static void append_tex_clamp(struct RegTable* tbl, uint64_t** alu_ptr, uint8_t t
     }
 }
 
-static void append_formula(struct RegTable* tbl, uint64_t** alu_ptr, uint8_t c[2][4], bool do_single, bool do_multiply,
+static void append_formula(struct RegTable* tbl, uint64_t** alu_ptr, int c[2][4], bool do_single, bool do_multiply,
                            bool do_mix, bool only_alpha) {
     if (do_single) {
         add_mov(tbl, alu_ptr, c[only_alpha][3], only_alpha);
@@ -897,7 +897,8 @@ int gx2GenerateShaderGroup(struct ShaderGroup* group, struct CCFeatures* cc_feat
         return -1;
     }
 
-    GX2InitFetchShaderEx(&group->fetchShader, group->fetchShader.program, group->numAttributes, group->attributes,
+    GX2InitFetchShaderEx(&group->fetchShader, (uint8_t*)group->fetchShader.program, group->numAttributes,
+                         group->attributes,
                          GX2_FETCH_SHADER_TESSELLATION_NONE, GX2_TESSELLATION_MODE_DISCRETE);
 
     // invalidate all programs
