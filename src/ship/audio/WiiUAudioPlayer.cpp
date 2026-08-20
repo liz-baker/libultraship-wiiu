@@ -34,18 +34,18 @@ bool WiiUAudioPlayer::DoInit() {
 
     const float srcRatio = static_cast<float>(GetSampleRate()) / static_cast<float>(AXGetInputSamplesPerSec());
 
-    for (int32_t channel = 0; channel < kChannelCount; channel++) {
+    for (int32_t channel = 0; channel < gChannelCount; channel++) {
         // AX reads the ring buffer by DMA, so it has to be cache-line aligned and
         // flushed by hand after every write.
-        mRingBuffers[channel] = static_cast<int16_t*>(memalign(64, kRingSamples * sizeof(int16_t)));
+        mRingBuffers[channel] = static_cast<int16_t*>(memalign(64, gRingSamples * sizeof(int16_t)));
         if (mRingBuffers[channel] == nullptr) {
             SPDLOG_ERROR("Failed to allocate the Wii U audio ring buffer for channel {}", channel);
             DoClose();
             return false;
         }
 
-        memset(mRingBuffers[channel], 0, kRingSamples * sizeof(int16_t));
-        DCFlushRange(mRingBuffers[channel], kRingSamples * sizeof(int16_t));
+        memset(mRingBuffers[channel], 0, gRingSamples * sizeof(int16_t));
+        DCFlushRange(mRingBuffers[channel], gRingSamples * sizeof(int16_t));
 
         AXVoice* voice = AXAcquireVoice(AX_VOICE_PRIORITY, nullptr, nullptr);
         if (voice == nullptr) {
@@ -79,7 +79,7 @@ bool WiiUAudioPlayer::DoInit() {
         offsets.dataType = AX_VOICE_FORMAT_LPCM16;
         offsets.loopingEnabled = AX_VOICE_LOOP_ENABLED;
         offsets.loopOffset = 0;
-        offsets.endOffset = kRingSamples - 1;
+        offsets.endOffset = gRingSamples - 1;
         offsets.currentOffset = 0;
         offsets.data = mRingBuffers[channel];
         AXSetVoiceOffsets(voice, &offsets);
@@ -91,13 +91,13 @@ bool WiiUAudioPlayer::DoInit() {
 
     // Start writing a full target's worth ahead of the read head so the first frames
     // do not underrun before the game gets into its stride.
-    mWriteOffset = static_cast<uint32_t>(GetDesiredBuffered()) % kRingSamples;
+    mWriteOffset = static_cast<uint32_t>(GetDesiredBuffered()) % gRingSamples;
 
     return true;
 }
 
 void WiiUAudioPlayer::DoClose() {
-    for (int32_t channel = 0; channel < kChannelCount; channel++) {
+    for (int32_t channel = 0; channel < gChannelCount; channel++) {
         if (mVoices[channel] != nullptr) {
             AXVoice* voice = static_cast<AXVoice*>(mVoices[channel]);
             AXSetVoiceState(voice, AX_VOICE_STATE_STOPPED);
@@ -136,7 +136,7 @@ int WiiUAudioPlayer::Buffered() {
 
     // The ring holds one sample per frame per channel, so the gap between the write
     // and read heads is already a frame count.
-    return static_cast<int>((mWriteOffset + kRingSamples - GetReadOffset()) % kRingSamples);
+    return static_cast<int>((mWriteOffset + gRingSamples - GetReadOffset()) % gRingSamples);
 }
 
 void WiiUAudioPlayer::DoPlay(const uint8_t* buf, size_t len) {
@@ -154,23 +154,23 @@ void WiiUAudioPlayer::DoPlay(const uint8_t* buf, size_t len) {
     const uint32_t startOffset = mWriteOffset;
 
     for (size_t frame = 0; frame < frames; frame++) {
-        const uint32_t offset = (startOffset + frame) % kRingSamples;
+        const uint32_t offset = (startOffset + frame) % gRingSamples;
 
-        for (int32_t channel = 0; channel < kChannelCount; channel++) {
+        for (int32_t channel = 0; channel < gChannelCount; channel++) {
             // A 5.1 setting still arrives interleaved; taking the first two channels
             // keeps the front pair, which is all the stereo AX path can carry.
             mRingBuffers[channel][offset] = samples[frame * inputChannels + channel];
         }
     }
 
-    mWriteOffset = static_cast<uint32_t>((startOffset + frames) % kRingSamples);
+    mWriteOffset = static_cast<uint32_t>((startOffset + frames) % gRingSamples);
 
     // Flush what was written, in one or two runs depending on whether it wrapped.
-    for (int32_t channel = 0; channel < kChannelCount; channel++) {
+    for (int32_t channel = 0; channel < gChannelCount; channel++) {
         if (mWriteOffset > startOffset) {
             DCFlushRange(&mRingBuffers[channel][startOffset], (mWriteOffset - startOffset) * sizeof(int16_t));
         } else {
-            DCFlushRange(&mRingBuffers[channel][startOffset], (kRingSamples - startOffset) * sizeof(int16_t));
+            DCFlushRange(&mRingBuffers[channel][startOffset], (gRingSamples - startOffset) * sizeof(int16_t));
             if (mWriteOffset > 0) {
                 DCFlushRange(&mRingBuffers[channel][0], mWriteOffset * sizeof(int16_t));
             }

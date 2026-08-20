@@ -54,12 +54,12 @@ class WiiUAudioPlayer final : public AudioPlayer {
     /** @brief Returns the AX voice's current read offset, in samples. */
     uint32_t GetReadOffset();
 
-    static constexpr int32_t kChannelCount = 2;    ///< Stereo only; AX surround is not wired up.
-    static constexpr uint32_t kRingSamples = 8192; ///< Per-channel ring buffer length, in samples.
+    static constexpr int32_t gChannelCount = 2;    ///< Stereo only; AX surround is not wired up.
+    static constexpr uint32_t gRingSamples = 8192; ///< Per-channel ring buffer length, in samples.
 
-    void* mVoices[kChannelCount] = { nullptr }; ///< AXVoice*, kept opaque so the header stays devkit-free.
-    int16_t* mRingBuffers[kChannelCount] = { nullptr };
-    uint32_t mWriteOffset = 0; ///< Next sample index to write, in [0, kRingSamples).
+    void* mVoices[gChannelCount] = { nullptr }; ///< AXVoice*, kept opaque so the header stays devkit-free.
+    int16_t* mRingBuffers[gChannelCount] = { nullptr };
+    uint32_t mWriteOffset = 0; ///< Next sample index to write, in [0, gRingSamples).
     bool mAxInitialized = false;
 };
 } // namespace Ship

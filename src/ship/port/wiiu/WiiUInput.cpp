@@ -112,7 +112,8 @@ constexpr ButtonTranslation kWiiRemoteButtons[] = {
     { WPAD_BUTTON_HOME, WIIU_BUTTON_HOME },
 };
 
-// KPAD folds the nunchuk's C and Z into the core hold mask.
+// The nunchuk's C and Z. WPAD gives them the same bits in the core mask as it
+// does in the nunchuk extension mask, so one table covers both.
 constexpr ButtonTranslation kNunchukButtons[] = {
     { WPAD_NUNCHUK_BUTTON_C, WIIU_BUTTON_C },
     { WPAD_NUNCHUK_BUTTON_Z, WIIU_BUTTON_Z },
@@ -188,8 +189,11 @@ uint32_t GetButtonsHeld(int32_t deviceIndex) {
         case DeviceKind::WiiRemote:
             return Translate(GetKPAD(deviceIndex)->hold, kWiiRemoteButtons);
         case DeviceKind::Nunchuk: {
-            const uint32_t hold = GetKPAD(deviceIndex)->hold;
-            return Translate(hold, kWiiRemoteButtons) | Translate(hold, kNunchukButtons);
+            const KPADStatus* status = GetKPAD(deviceIndex);
+            // KPAD reports the core buttons in the top-level mask and the nunchuk's own
+            // in the extension struct, so both have to be read.
+            return Translate(status->hold, kWiiRemoteButtons) |
+                   Translate(status->hold | status->nunchuk.hold, kNunchukButtons);
         }
         case DeviceKind::Classic:
             return Translate(GetKPAD(deviceIndex)->classic.hold, kClassicButtons);
@@ -220,7 +224,7 @@ float GetAxisValue(int32_t deviceIndex, int32_t axis) {
             if (!isLeft) {
                 return 0.0f;
             }
-            const KPADVec2D stick = GetKPAD(deviceIndex)->nunchuck.stick;
+            const KPADVec2D stick = GetKPAD(deviceIndex)->nunchuk.stick;
             return isX ? stick.x : stick.y;
         }
         case DeviceKind::Classic: {
