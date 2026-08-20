@@ -73,5 +73,13 @@ clean compile first. Outstanding items:
 5. Verify the `ppc-tinyxml2` / `ppc-libzip` portlibs satisfy the core's
    `find_package` calls on `CafeOS`.
 
-Progress is driven through the `build-wiiu` CI job, which surfaces the concrete
-remaining compile errors on real toolchain output.
+Progress is driven through CI on real devkitPPC output. The blocking
+`build-wiiu` job proves the core library still compiles with the GX2 backend
+gated off, and a second, **non-blocking** `build-wiiu-gx2` job configures with
+`-DLUS_WIIU_GX2=ON` and builds the GX2 renderer / Wii U window backend with
+Ninja `-k 0`, so every remaining GX2 compile error shows up in one run while the
+class-based conversion is in progress. The devkitPPC toolchain image cannot be
+pulled from the Claude Code sandbox (its Docker Hub blob CDN is blocked by the
+egress policy), so this CI job is the compile loop for the GX2 code. Once it is
+green it becomes blocking (folded into `build-wiiu`) — see the revert checklist
+in `CLAUDE.md`.

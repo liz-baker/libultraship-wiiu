@@ -45,15 +45,24 @@ ready (or whenever full PR validation is wanted again):
 3. ~~**`.github/workflows/build-wiiu.yml`** — the build step was
    `continue-on-error`.~~ Done (Phase A): the Wii U library compiles and links
    end to end, so the `Build` step is now blocking.
+5. **`.github/workflows/build-wiiu.yml`** — a second job, `build-wiiu-gx2`,
+   configures with `-DLUS_WIIU_GX2=ON` and builds the experimental GX2 renderer
+   / Wii U window backend with `continue-on-error: true` (Ninja `-k 0`). It is a
+   Phase B diagnostic that surfaces the remaining GX2 compile errors on real
+   devkitPPC output without blocking PRs. *Restore (Phase B/D):* once the GX2
+   backend compiles, make the build step blocking — ideally by folding
+   `-DLUS_WIIU_GX2=ON` into the main `build-wiiu` job (or dropping the separate
+   job) so the console build is validated as one blocking check.
 4. **`.github/workflows/tidy-format-validation.yml`** — `src/ship/port/wiiu/*`
    is excluded from the clang-tidy-diff step because those files include
    devkitPPC-only headers unavailable on the Linux tidy host. This exclusion is
    fine to keep, but revisit if the wiiu port sources should be tidied via a
    cross-toolchain setup.
 
-Still active on PRs during the port: `build-wiiu` and `tidy-format-validation`
-(clang-format + clang-tidy). Docs workflows are path-filtered and only run when
-`docs/**` changes.
+Still active on PRs during the port: `build-wiiu` (blocking), `build-wiiu-gx2`
+(non-blocking GX2 diagnostic) and `tidy-format-validation` (clang-format +
+clang-tidy). Docs workflows are path-filtered and only run when `docs/**`
+changes.
 
 ## Wii U build
 
