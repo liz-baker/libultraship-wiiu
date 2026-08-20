@@ -115,11 +115,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Android" OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
     )
 elseif (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
     file(GLOB_RECURSE Source_Files__Port RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "port/wiiu/*.cpp")
-    # The GX2 ImGui backends depend on the in-progress GX2 renderer; only build
-    # them when that renderer is enabled (see docs/wiiu-port-status.md).
-    if (NOT LUS_WIIU_GX2)
-        list(FILTER Source_Files__Port EXCLUDE REGEX "port/wiiu/ImGui/")
-    endif()
 endif()
 
 source_group("port" FILES ${Source_Files__Port})

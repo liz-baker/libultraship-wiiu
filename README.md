@@ -107,9 +107,6 @@ cmake --no-warn-unused-cli -H. -Bbuild-wiiu -GNinja \
 cmake --build build-wiiu
 ```
 
-The GX2 rendering backend is still being ported to the class-based Fast3D API
-and is gated behind `-DLUS_WIIU_GX2=ON` (off by default).
-
 ## License
 LUS is licensed under the [MIT](https://github.com/Kenix3/libultraship/blob/main/LICENSE) license.
 

@@ -50,10 +50,9 @@ unavailable on `CafeOS`:
 ## Status
 
 **Phases A and B are complete.** The core `libultraship.a` compiles and links end
-to end for `CafeOS`, *including* the GX2 renderer and Wii U window backend
-(`-DLUS_WIIU_GX2=ON`). SDL3 is fully guarded out of the always-compiled layers,
-and the single blocking `build-wiiu` CI job now builds the GX2 configuration, so
-the console build is validated as one check.
+to end for `CafeOS`, including the GX2 renderer and Wii U window backend. SDL3 is
+fully guarded out of the always-compiled layers, and the single blocking
+`build-wiiu` CI job covers the whole console build.
 
 ### What Phase B changed
 
@@ -74,6 +73,11 @@ the console build is validated as one check.
   `GetWindowBackendName`) and the `Fast3dGui` ImGui backend switches.
 - `gx2_shader_gen.c` became `.cpp` so it can use the now-C++ `CCFeatures`, and the
   GX2/Wii U ImGui backends were ported to the current ImGui.
+- The `LUS_WIIU_GX2` option was removed. It existed only so Phase A could compile
+  the core while the GX2 sources were still unconverted; every use was paired with
+  `__WIIU__`, and with it off the Wii U build registered `FAST3D_SDL_OPENGL` as
+  its only backend even though SDL is excluded on `CafeOS`. `__WIIU__` / `CafeOS`
+  is now the single gate.
 
 ## Remaining work
 

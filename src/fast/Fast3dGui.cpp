@@ -40,7 +40,7 @@
 IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #endif
 
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
 #include "ship/port/wiiu/ImGui/imgui_impl_wiiu.h"
 #include "ship/port/wiiu/ImGui/imgui_impl_gx2.h"
 #include "fast/backends/gfx_wiiu.h"
@@ -115,7 +115,7 @@ void Fast3dGui::HandleWindowEvents(Fast::WindowEvent event) {
                                            event.Win32.Param2);
             break;
 #endif
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
             ImGui_ImplWiiU_ProcessInput(static_cast<const ImGui_ImplWiiU_ControllerInput*>(event.Gx2.Input));
             break;
@@ -153,7 +153,7 @@ void Fast3dGui::ImGuiWMInit() {
             ImGui_ImplWin32_Init(mImpl.Dx11.Window);
             break;
 #endif
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
             ImGui_ImplWiiU_Init();
             break;
@@ -184,7 +184,7 @@ void Fast3dGui::ImGuiWMShutdown() {
             ImGui_ImplWin32_Shutdown();
             break;
 #endif
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
             ImGui_ImplWiiU_Shutdown();
             break;
@@ -223,7 +223,7 @@ void Fast3dGui::ImGuiBackendInit() {
                                 static_cast<ID3D11DeviceContext*>(mImpl.Dx11.DeviceContext));
             break;
 #endif
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
             ImGui_ImplGX2_Init();
             break;
@@ -251,7 +251,7 @@ void Fast3dGui::ImGuiBackendShutdown() {
             ImGui_ImplDX11_Shutdown();
             break;
 #endif
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
             ImGui_ImplGX2_Shutdown();
             break;
@@ -283,7 +283,7 @@ void Fast3dGui::ImGuiBackendNewFrame() {
             break;
         }
 #endif
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
             ImGui_ImplGX2_NewFrame();
             break;
@@ -307,7 +307,7 @@ void Fast3dGui::ImGuiWMNewFrame() {
             ImGui_ImplWin32_NewFrame();
             break;
 #endif
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
         case WindowBackend::FAST3D_GX2: {
             // The Wii U platform backend has no dedicated NewFrame; feed ImGui the
             // frame delta measured by the window backend (microseconds, min 1).
@@ -356,7 +356,7 @@ void Fast3dGui::ImGuiRenderDrawData(ImDrawData* data) {
             ImGui_ImplDX11_RenderDrawData(data);
             break;
 #endif
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
             ImGui_ImplGX2_RenderDrawData(data);
             break;

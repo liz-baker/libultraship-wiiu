@@ -15,7 +15,7 @@
 #include "fast/backends/gfx_direct3d_common.h"
 #include "fast/backends/gfx_direct3d11.h"
 #endif
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
 #include "fast/backends/gfx_gx2.h"
 #include "fast/backends/gfx_wiiu.h"
 #endif
@@ -49,7 +49,7 @@ Fast3dWindow::Fast3dWindow(std::shared_ptr<Ship::Gui> gui, std::shared_ptr<FastM
         AddAvailableWindowBackend(WindowBackend::FAST3D_SDL_METAL);
     }
 #endif
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
     AddAvailableWindowBackend(WindowBackend::FAST3D_GX2);
 #else
     AddAvailableWindowBackend(WindowBackend::FAST3D_SDL_OPENGL);
@@ -201,7 +201,7 @@ void Fast3dWindow::InitWindowManager() {
                                                      GetContext()->GetChildren().GetFirst<Ship::ResourceManager>());
             break;
 #endif
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
             mWindowManagerApi = new GfxWindowBackendWiiU(std::dynamic_pointer_cast<Fast::Fast3dGui>(GetGui()));
             mRenderingApi = new GfxRenderingAPIGX2();
@@ -480,7 +480,7 @@ std::string Fast3dWindow::GetWindowBackendName() {
         case WindowBackend::FAST3D_SDL_METAL:
             return "Metal";
 #endif
-#if defined(__WIIU__) && defined(LUS_WIIU_GX2)
+#ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
             return "GX2";
 #endif

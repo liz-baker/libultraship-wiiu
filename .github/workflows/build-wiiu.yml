@@ -56,14 +56,7 @@ jobs:
           export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}
           cmake --no-warn-unused-cli -H. -Bbuild-wiiu -GNinja \
             -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/WiiU.cmake \
-            -DCMAKE_BUILD_TYPE:STRING=Release \
-            -DLUS_WIIU_GX2=ON
-      # Single blocking Wii U build. The GX2 renderer and Wii U window backend
-      # (-DLUS_WIIU_GX2=ON) are now converted to the class-based Fast3D API and
-      # compile and link end to end, so the console configuration is validated
-      # as one check rather than a separate non-blocking diagnostic job.
-      # Remaining port work (native input/audio) is tracked in
-      # docs/wiiu-port-status.md.
+            -DCMAKE_BUILD_TYPE:STRING=Release
       - name: Build
         run: |
           export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}

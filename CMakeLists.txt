@@ -12,16 +12,6 @@ option(INCLUDE_PROFILING "Enable action and tickable profiling timers" OFF)
 option(COMPONENT_THREAD_SAFE "Enable thread safety for Component parent/child lists" OFF)
 option(DISABLE_DLL_LOADER "Disable dynamic library loading support" OFF)
 option(ENABLE_SCRIPTING "Enable TCC-based C mod compilation and scripting system" OFF)
-# Wii U only: compile the in-progress GX2 renderer / window backend. Off by
-# default while it is ported to the class-based Fast3D API. See
-# docs/wiiu-port-status.md.
-option(LUS_WIIU_GX2 "Build the experimental Wii U GX2 rendering backend" OFF)
-# Expose the option as a compile definition so the always-compiled Fast3D
-# window/GUI layer can guard its GX2 backend wiring on it.
-if (LUS_WIIU_GX2)
-    add_compile_definitions(LUS_WIIU_GX2)
-endif()
-
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     option(SIGN_LIBRARY "Enable xcode signing" OFF)
     option(BUNDLE_ID "Bundle ID for xcode signing" "com.example.libultraship")

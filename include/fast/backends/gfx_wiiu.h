@@ -18,8 +18,7 @@
 extern bool has_foreground;
 extern uint32_t frametime;
 
-// mem1 / foreground heap and context-state helpers shared with the GX2 renderer
-// (GfxRenderingAPIGX2). Implemented in gfx_wiiu.cpp.
+// Heap and context-state helpers shared with GfxRenderingAPIGX2.
 bool gfx_wiiu_init_mem1(void);
 void gfx_wiiu_destroy_mem1(void);
 bool gfx_wiiu_init_foreground(void);

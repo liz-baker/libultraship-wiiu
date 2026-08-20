@@ -11,8 +11,8 @@ Roadmap to a working Wii U build, in dependency order. Keep this list current as
 phases land.
 
 - [x] **Phase A — Guard SDL3 out so the core compiles for Wii U.** Done: the
-  core `libultraship.a` compiles and links end to end for `CafeOS` (GX2 renderer
-  gated behind `LUS_WIIU_GX2`, off). SDL3 is guarded out of the always-compiled
+  core `libultraship.a` compiles and links end to end for `CafeOS` (with the GX2
+  renderer still excluded). SDL3 is guarded out of the always-compiled
   layers — the Fast3D GUI/window layer, audio (falls back to the null player),
   the controller/physical-device layer and mapping factories, the libultra OS
   shim, and the crash handler. The `build-wiiu` compile step is now blocking.
@@ -21,8 +21,10 @@ phases land.
   `GfxWindowBackendWiiU : GfxWindowBackend`, includes re-rooted, `FAST3D_GX2`
   added to the `WindowBackend` enum and wired into `Fast3dWindow` / `Fast3dGui`,
   the GX2 ImGui backends ported to the current ImGui, and `gx2_shader_gen`
-  converted to C++. The GX2 configuration (`-DLUS_WIIU_GX2=ON`) now compiles and
-  links end to end and is folded into the single blocking `build-wiiu` CI job.
+  converted to C++. The GX2 renderer compiles and links end to end, so the
+  `LUS_WIIU_GX2` scaffolding option was dropped — the backend now builds
+  unconditionally on `CafeOS` — and the single blocking `build-wiiu` CI job
+  covers it.
 - [ ] **Phase C — Native input/audio.** Wire native VPAD/KPAD input into the
   controller layer (a Wii U physical-device backend replacing the SDL mapping)
   and add a native AX audio player, so the build is functional, not just
@@ -51,16 +53,16 @@ ready (or whenever full PR validation is wanted again):
 4. ~~**`.github/workflows/build-wiiu.yml`** — a second, non-blocking
    `build-wiiu-gx2` job built the GX2 renderer as a Phase B diagnostic.~~ Done
    (Phase B): the GX2 backend compiles and links, so the separate job was
-   dropped and `-DLUS_WIIU_GX2=ON` folded into the single blocking `build-wiiu`
-   job — the console build is now validated as one check.
+   dropped and the `LUS_WIIU_GX2` option removed — the console build is now
+   validated as one check.
 5. **`.github/workflows/tidy-format-validation.yml`** — `src/ship/port/wiiu/*`
    is excluded from the clang-tidy-diff step because those files include
    devkitPPC-only headers unavailable on the Linux tidy host. This exclusion is
    fine to keep, but revisit if the wiiu port sources should be tidied via a
    cross-toolchain setup.
 
-Still active on PRs during the port: `build-wiiu` (blocking, builds the GX2
-configuration) and `tidy-format-validation` (clang-format + clang-tidy). Docs
+Still active on PRs during the port: `build-wiiu` (blocking) and
+`tidy-format-validation` (clang-format + clang-tidy). Docs
 workflows are path-filtered and only run when `docs/**` changes.
 
 ## Wii U build
@@ -68,8 +70,7 @@ workflows are path-filtered and only run when `docs/**` changes.
 ```
 dkp-pacman -S --needed wiiu-cmake wiiu-pkg-config ppc-tinyxml2 ppc-libzip
 cmake --no-warn-unused-cli -H. -Bbuild-wiiu -GNinja \
-  -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/WiiU.cmake -DCMAKE_BUILD_TYPE=Release \
-  -DLUS_WIIU_GX2=ON
+  -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/WiiU.cmake -DCMAKE_BUILD_TYPE=Release
 cmake --build build-wiiu
 ```
 
@@ -77,10 +78,10 @@ cmake --build build-wiiu
   `__WIIU__`; guard Wii U-only code with `CafeOS` in CMake and `__WIIU__` in C/C++.
 - SDL3 is **not** available for the Wii U. It is guarded out on `CafeOS`; input
   is native VPAD/KPAD (`src/ship/port/wiiu/WiiUImpl.cpp`).
-- The GX2 renderer / window backend are gated behind `-DLUS_WIIU_GX2=ON`, which
-  is **off by default** but is what CI builds and what a real console build
-  needs — they implement the class-based `GfxRenderingAPI` / `GfxWindowBackend`
-  interfaces and select the `FAST3D_GX2` window backend.
+- The GX2 renderer / window backend build unconditionally on `CafeOS`. They
+  implement the class-based `GfxRenderingAPI` / `GfxWindowBackend` interfaces and
+  select the `FAST3D_GX2` window backend, which is the only backend available on
+  the console.
 
 ## Conventions
 

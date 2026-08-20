@@ -507,9 +507,8 @@ bool GfxWindowBackendWiiU::IsRunning() {
 }
 
 void GfxWindowBackendWiiU::Destroy() {
-    // Native input teardown. GX2 resource teardown happens in the renderer's
-    // destructor, and GX2Shutdown / WHBProcShutdown in this backend's
-    // destructor — both run after this Destroy() call (see Fast3dWindow dtor).
+    // Native input only. GX2 teardown must happen after this, so it lives in the
+    // renderer and window backend destructors.
     Ship::WiiU::Exit();
 }
 

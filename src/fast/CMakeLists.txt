@@ -40,17 +40,9 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
-    # Wii U uses the GX2 renderer and its own window backend; drop the
-    # desktop SDL/OpenGL backends.
     list(FILTER Source_Files__Graphic EXCLUDE REGEX "backends/gfx_sdl*")
     list(FILTER Source_Files__Graphic EXCLUDE REGEX "backends/gfx_opengl*")
-endif()
-
-# The GX2/Wii U renderer is still being ported to the class-based Fast3D API.
-# It is only compiled under the Cafe toolchain when LUS_WIIU_GX2 is enabled so
-# the rest of the Wii U port can be validated independently. See
-# docs/wiiu-port-status.md.
-if (NOT (CMAKE_SYSTEM_NAME STREQUAL "CafeOS" AND LUS_WIIU_GX2))
+else()
     list(FILTER Source_Files__Graphic EXCLUDE REGEX "backends/gfx_wiiu*")
     list(FILTER Source_Files__Graphic EXCLUDE REGEX "backends/gfx_gx2*")
     list(FILTER Source_Files__Graphic EXCLUDE REGEX "backends/gx2_*")

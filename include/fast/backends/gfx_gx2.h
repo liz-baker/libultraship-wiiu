@@ -17,8 +17,8 @@
 #include <gx2/surface.h>
 #include <gx2/enum.h>
 
-#include "fast/backends/gx2_shader_gen.h"        // struct ShaderGroup, Fast::CCFeatures, SHADER_MAX_TEXTURES
-#include "ship/port/wiiu/ImGui/imgui_impl_gx2.h" // ImGui_ImplGX2_Texture
+#include "fast/backends/gx2_shader_gen.h"
+#include "ship/port/wiiu/ImGui/imgui_impl_gx2.h"
 
 namespace Fast {
 
