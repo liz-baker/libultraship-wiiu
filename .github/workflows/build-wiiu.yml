@@ -56,10 +56,13 @@ jobs:
           export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}
           cmake --no-warn-unused-cli -H. -Bbuild-wiiu -GNinja \
             -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/WiiU.cmake \
-            -DCMAKE_BUILD_TYPE:STRING=Release
-      # The core Wii U library (with the GX2 renderer gated behind LUS_WIIU_GX2)
-      # now compiles and links end to end, so this step is blocking. The GX2
-      # renderer conversion and native input/audio are tracked in
+            -DCMAKE_BUILD_TYPE:STRING=Release \
+            -DLUS_WIIU_GX2=ON
+      # Single blocking Wii U build. The GX2 renderer and Wii U window backend
+      # (-DLUS_WIIU_GX2=ON) are now converted to the class-based Fast3D API and
+      # compile and link end to end, so the console configuration is validated
+      # as one check rather than a separate non-blocking diagnostic job.
+      # Remaining port work (native input/audio) is tracked in
       # docs/wiiu-port-status.md.
       - name: Build
         run: |
@@ -71,64 +74,3 @@ jobs:
           name: libultraship-wiiu
           path: build-wiiu/src/*.a
           if-no-files-found: error
-
-  # Phase B diagnostic job: cross-compiles the experimental GX2 renderer /
-  # Wii U window backend (-DLUS_WIIU_GX2=ON). Those sources are still being
-  # converted from the old C struct-of-function-pointers Fast3D API to the
-  # class-based GfxRenderingAPI / GfxWindowBackend interfaces, so this job is
-  # intentionally NON-BLOCKING (continue-on-error) for now: it exists to
-  # surface the concrete remaining GX2 compile errors on real devkitPPC output
-  # while the conversion is in progress. Ninja is run with `-k 0` so a single
-  # error does not hide the rest. Flip this to blocking (and fold it into the
-  # main build-wiiu job) once the GX2 backend compiles — see
-  # docs/wiiu-port-status.md and the revert checklist in CLAUDE.md.
-  build-wiiu-gx2:
-    runs-on: ubuntu-latest
-    container:
-      image: devkitpro/devkitppc:latest
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Wii U dependencies
-        run: |
-          # Same install strategy as build-wiiu: prefer the image's populated
-          # pacman DB (-S, no -y) and only fall back to a synced install with
-          # backoff. The GX2 backend links against the same portlibs.
-          PKGS="wiiu-cmake wiiu-pkg-config ppc-tinyxml2 ppc-libzip ppc-zlib ppc-bzip2"
-          if dkp-pacman -S --needed --noconfirm $PKGS; then
-            exit 0
-          fi
-          echo "Install without DB sync failed; falling back to synced install"
-          for attempt in 1 2 3 4 5; do
-            if dkp-pacman -Syu --needed --noconfirm $PKGS; then
-              exit 0
-            fi
-            echo "dkp-pacman sync attempt $attempt failed; retrying in $((attempt * 15))s"
-            sleep $((attempt * 15))
-          done
-          echo "dkp-pacman failed after retries" >&2
-          exit 1
-      - name: Install Python dependencies
-        run: |
-          python3 -m pip install -r requirements.txt --break-system-packages \
-            || python3 -m pip install -r requirements.txt \
-            || pip3 install -r requirements.txt --break-system-packages \
-            || true
-      - name: Configure (LUS_WIIU_GX2=ON)
-        run: |
-          source /etc/profile.d/devkit-env.sh || true
-          export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}
-          cmake --no-warn-unused-cli -H. -Bbuild-wiiu-gx2 -GNinja \
-            -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/WiiU.cmake \
-            -DCMAKE_BUILD_TYPE:STRING=Release \
-            -DLUS_WIIU_GX2=ON
-      # NON-BLOCKING on purpose while the GX2 backend is being ported. `-k 0`
-      # tells Ninja to keep going after the first failure so the whole error
-      # surface shows up in one run.
-      - name: Build (non-blocking, keep going)
-        continue-on-error: true
-        run: |
-          export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}
-          cmake --build build-wiiu-gx2 --config Release --parallel -- -k 0
