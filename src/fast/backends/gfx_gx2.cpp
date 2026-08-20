@@ -4,25 +4,29 @@
 */
 #ifdef __WIIU__
 
-#include "window/Window.h"
+#include "fast/backends/gfx_gx2.h"
 
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 #include <malloc.h>
+#include <cassert>
+#include <algorithm>
+#include <bit>
+#include <iterator>
 
-#include <map>
+#include "ship/window/Window.h"
 
 #ifndef _LANGUAGE_C
 #define _LANGUAGE_C
 #endif
 #include "libultraship/libultra/gbi.h"
-#include <public/bridge/consolevariablebridge.h>
+#include "libultraship/bridge/consolevariablebridge.h"
 
-#include "gfx_cc.h"
-#include "gfx_rendering_api.h"
-#include "gfx_pc.h"
-#include "gfx_wiiu.h"
+#include "fast/interpreter.h"
+#include "fast/backends/gfx_wiiu.h"
+#include "gx2_util.h"
 
 #include <gx2/texture.h>
 #include <gx2/draw.h>
@@ -34,86 +38,16 @@
 #include <gx2/mem.h>
 #include <gx2/registers.h>
 #include <gx2/display.h>
-#include "gx2_shader_gen.h"
-#include "gx2_util.h"
 
 #include <proc_ui/procui.h>
 #include <coreinit/memory.h>
 
-#include <port/wiiu/ImGui/imgui_impl_gx2.h>
-
 #define ALIGN(x, align) (((x) + ((align)-1)) & ~((align)-1))
-
-struct ShaderProgram {
-    struct ShaderGroup group;
-    uint8_t num_inputs;
-    bool used_textures[2];
-    bool used_noise;
-    uint32_t window_params_offset;
-    int32_t samplers_location[SHADER_MAX_TEXTURES];
-};
-
-struct Texture {
-    GX2Texture texture;
-    bool texture_uploaded;
-
-    GX2Sampler sampler;
-    bool sampler_set;
-
-    // For ImGui rendering
-    ImGui_ImplGX2_Texture imtex;
-};
-
-struct Framebuffer {
-    GX2ColorBuffer color_buffer;
-    bool colorBufferMem1;
-    GX2DepthBuffer depth_buffer;
-    bool depthBufferMem1;
-
-    GX2Texture texture;
-    GX2Sampler sampler;
-
-    // For ImGui rendering
-    ImGui_ImplGX2_Texture imtex;
-};
-
-static std::array<Framebuffer, 100> framebuffers;
-static std::size_t used_framebuffers;
-static std::size_t current_framebuffer;
-static GX2DepthBuffer depthReadBuffer;
-
-static std::map<std::pair<uint64_t, uint32_t>, struct ShaderProgram> shader_program_pool;
-static struct ShaderProgram* current_shader_program;
-
-static struct Texture* current_texture;
-static int current_tile;
 
 // 96 Mb (should be more than enough to draw everything without waiting for the GPU)
 #define DRAW_BUFFER_SIZE 0x6000000
-static uint8_t* draw_buffer = nullptr;
-static uint8_t* draw_ptr = nullptr;
 
-static uint32_t frame_count;
-static float current_noise_scale;
-static FilteringMode current_filter_mode = FILTER_LINEAR;
-
-static BOOL current_depth_test = TRUE;
-static BOOL current_depth_write = TRUE;
-static GX2CompareFunction current_depth_compare_function = GX2_COMPARE_FUNC_LESS;
-
-static float current_viewport_x = 0.0f;
-static float current_viewport_y = 0.0f;
-static float current_viewport_width = WIIU_DEFAULT_FB_WIDTH;
-static float current_viewport_height = WIIU_DEFAULT_FB_HEIGHT;
-
-static uint32_t current_scissor_x = 0;
-static uint32_t current_scissor_y = 0;
-static uint32_t current_scissor_width = WIIU_DEFAULT_FB_WIDTH;
-static uint32_t current_scissor_height = WIIU_DEFAULT_FB_HEIGHT;
-
-static bool current_zmode_decal = false;
-static bool current_SSDB = -2.0f;
-static bool current_use_alpha = false;
+namespace Fast {
 
 static inline GX2SamplerVar* GX2GetPixelSamplerVar(const GX2PixelShader* shader, const char* name) {
     for (uint32_t i = 0; i < shader->samplerVarCount; ++i) {
@@ -135,16 +69,16 @@ static inline int32_t GX2GetPixelUniformVarOffset(const GX2PixelShader* shader, 
     return uniform ? uniform->offset : -1;
 }
 
-static const char* gfx_gx2_get_name() {
+const char* GfxRenderingAPIGX2::GetName() {
     return "GX2";
 }
 
-static int gfx_gx2_get_max_texture_size() {
+int GfxRenderingAPIGX2::GetMaxTextureSize() {
     // TODO: This should be a define from the Wii U toolchain, but there isn't one yet
     return 8192;
 }
 
-static void gfx_gx2_init_framebuffer(struct Framebuffer* buffer, uint32_t width, uint32_t height) {
+void GfxRenderingAPIGX2::InitFramebuffer(Framebuffer* buffer, uint32_t width, uint32_t height) {
     memset(&buffer->color_buffer, 0, sizeof(GX2ColorBuffer));
     buffer->color_buffer.surface.use = GX2_SURFACE_USE_TEXTURE_COLOR_BUFFER_TV;
     buffer->color_buffer.surface.dim = GX2_SURFACE_DIM_TEXTURE_2D;
@@ -171,48 +105,53 @@ static void gfx_gx2_init_framebuffer(struct Framebuffer* buffer, uint32_t width,
     buffer->depth_buffer.depthClear = 1.0f;
 }
 
-static struct GfxClipParameters gfx_gx2_get_clip_parameters(void) {
+GfxClipParameters GfxRenderingAPIGX2::GetClipParameters() {
     return { false, false };
 }
 
-static void gfx_gx2_set_uniforms(struct ShaderProgram* prg) {
-    float window_params_array[4] = { current_noise_scale, (float)frame_count, 0.0f, 0.0f };
+void GfxRenderingAPIGX2::SetUniforms(ShaderProgram* prg) {
+    float window_params_array[4] = { mNoiseScale, (float)mFrameCount, 0.0f, 0.0f };
 
     GX2SetPixelUniformReg(prg->window_params_offset, 4, window_params_array);
 }
 
-static void gfx_gx2_unload_shader(struct ShaderProgram* old_prg) {
-    current_shader_program = nullptr;
+void GfxRenderingAPIGX2::UnloadShader(ShaderProgram* old_prg) {
+    mCurrentShaderProgram = nullptr;
 }
 
-static void gfx_gx2_load_shader(struct ShaderProgram* new_prg) {
-    current_shader_program = new_prg;
+void GfxRenderingAPIGX2::LoadShader(ShaderProgram* new_prg) {
+    mCurrentShaderProgram = new_prg;
 
     GX2SetFetchShader(&new_prg->group.fetchShader);
     GX2SetVertexShader(&new_prg->group.vertexShader);
     GX2SetPixelShader(&new_prg->group.pixelShader);
 
-    gfx_gx2_set_uniforms(new_prg);
+    SetUniforms(new_prg);
 }
 
-static struct ShaderProgram* gfx_gx2_create_and_load_new_shader(uint64_t shader_id0, uint32_t shader_id1) {
-    struct CCFeatures cc_features;
+void GfxRenderingAPIGX2::ClearShaderCache() {
+    mShaderProgramPool.clear();
+    mCurrentShaderProgram = nullptr;
+}
+
+ShaderProgram* GfxRenderingAPIGX2::CreateAndLoadNewShader(uint64_t shader_id0, uint64_t shader_id1) {
+    CCFeatures cc_features;
     gfx_cc_get_features(shader_id0, shader_id1, &cc_features);
 
-    struct ShaderProgram* prg = &shader_program_pool[std::make_pair(shader_id0, shader_id1)];
+    ShaderProgram* prg = &mShaderProgramPool[std::make_pair(shader_id0, shader_id1)];
 
-    printf("Generating shader: %016llx-%08x\n", shader_id0, shader_id1);
+    printf("Generating shader: %016llx-%016llx\n", (unsigned long long)shader_id0, (unsigned long long)shader_id1);
     if (gx2GenerateShaderGroup(&prg->group, &cc_features) != 0) {
         printf("Failed to generate shader\n");
-        current_shader_program = nullptr;
+        mCurrentShaderProgram = nullptr;
         return nullptr;
     }
 
-    prg->num_inputs = cc_features.num_inputs;
-    prg->used_textures[0] = cc_features.used_textures[0];
-    prg->used_textures[1] = cc_features.used_textures[1];
+    prg->num_inputs = cc_features.numInputs;
+    prg->used_textures[0] = cc_features.usedTextures[0];
+    prg->used_textures[1] = cc_features.usedTextures[1];
 
-    gfx_gx2_load_shader(prg);
+    LoadShader(prg);
 
     prg->window_params_offset = GX2GetPixelUniformVarOffset(&prg->group.pixelShader, "window_params");
     prg->samplers_location[0] = GX2GetPixelSamplerVarLocation(&prg->group.pixelShader, "uTex0");
@@ -229,19 +168,19 @@ static struct ShaderProgram* gfx_gx2_create_and_load_new_shader(uint64_t shader_
     return prg;
 }
 
-static struct ShaderProgram* gfx_gx2_lookup_shader(uint64_t shader_id0, uint32_t shader_id1) {
-    auto it = shader_program_pool.find(std::make_pair(shader_id0, shader_id1));
-    return it == shader_program_pool.end() ? nullptr : &it->second;
+ShaderProgram* GfxRenderingAPIGX2::LookupShader(uint64_t shader_id0, uint64_t shader_id1) {
+    auto it = mShaderProgramPool.find(std::make_pair(shader_id0, shader_id1));
+    return it == mShaderProgramPool.end() ? nullptr : &it->second;
 }
 
-static void gfx_gx2_shader_get_info(struct ShaderProgram* prg, uint8_t* num_inputs, bool used_textures[2]) {
+void GfxRenderingAPIGX2::ShaderGetInfo(ShaderProgram* prg, uint8_t* num_inputs, bool used_textures[2]) {
     *num_inputs = prg->num_inputs;
     used_textures[0] = prg->used_textures[0];
     used_textures[1] = prg->used_textures[1];
 }
 
-static uint32_t gfx_gx2_new_texture(void) {
-    struct Texture* tex = (struct Texture*)calloc(1, sizeof(struct Texture));
+uint32_t GfxRenderingAPIGX2::NewTexture() {
+    Texture* tex = (Texture*)calloc(1, sizeof(Texture));
 
     tex->imtex.Texture = &tex->texture;
     tex->imtex.Sampler = &tex->sampler;
@@ -250,8 +189,8 @@ static uint32_t gfx_gx2_new_texture(void) {
     return (uint32_t)tex;
 }
 
-static void gfx_gx2_delete_texture(uint32_t texture_id) {
-    struct Texture* tex = (struct Texture*)texture_id;
+void GfxRenderingAPIGX2::DeleteTexture(uint32_t texture_id) {
+    Texture* tex = (Texture*)texture_id;
 
     if (tex->texture.surface.image) {
         free(tex->texture.surface.image);
@@ -260,13 +199,13 @@ static void gfx_gx2_delete_texture(uint32_t texture_id) {
     free((void*)tex);
 }
 
-static void gfx_gx2_select_texture(int tile, uint32_t texture_id) {
-    struct Texture* tex = (struct Texture*)texture_id;
-    current_texture = tex;
-    current_tile = tile;
+void GfxRenderingAPIGX2::SelectTexture(int tile, uint32_t texture_id) {
+    Texture* tex = (Texture*)texture_id;
+    mCurrentTexture = tex;
+    mCurrentTile = tile;
 
-    if (current_shader_program) {
-        int32_t sampler_location = current_shader_program->samplers_location[tile];
+    if (mCurrentShaderProgram) {
+        int32_t sampler_location = mCurrentShaderProgram->samplers_location[tile];
         if (sampler_location != -1) {
             if (tex->texture_uploaded) {
                 GX2SetPixelTexture(&tex->texture, sampler_location);
@@ -279,8 +218,8 @@ static void gfx_gx2_select_texture(int tile, uint32_t texture_id) {
     }
 }
 
-static void gfx_gx2_upload_texture(const uint8_t* rgba32_buf, uint32_t width, uint32_t height) {
-    struct Texture* tex = current_texture;
+void GfxRenderingAPIGX2::UploadTexture(const uint8_t* rgba32_buf, uint32_t width, uint32_t height) {
+    Texture* tex = mCurrentTexture;
     assert(tex);
 
     if ((tex->texture.surface.width != width) || (tex->texture.surface.height != height) ||
@@ -322,8 +261,8 @@ static void gfx_gx2_upload_texture(const uint8_t* rgba32_buf, uint32_t width, ui
 
     GX2Invalidate(GX2_INVALIDATE_MODE_CPU_TEXTURE, tex->texture.surface.image, tex->texture.surface.imageSize);
 
-    if (current_shader_program && current_shader_program->samplers_location[current_tile] != -1) {
-        GX2SetPixelTexture(&tex->texture, current_shader_program->samplers_location[current_tile]);
+    if (mCurrentShaderProgram && mCurrentShaderProgram->samplers_location[mCurrentTile] != -1) {
+        GX2SetPixelTexture(&tex->texture, mCurrentShaderProgram->samplers_location[mCurrentTile]);
     }
 
     tex->texture_uploaded = true;
@@ -344,35 +283,35 @@ static GX2TexClampMode gfx_cm_to_gx2(uint32_t val) {
     return GX2_TEX_CLAMP_MODE_WRAP;
 }
 
-static void gfx_gx2_set_sampler_parameters(int tile, bool linear_filter, uint32_t cms, uint32_t cmt) {
-    struct Texture* tex = current_texture;
+void GfxRenderingAPIGX2::SetSamplerParameters(int tile, bool linear_filter, uint32_t cms, uint32_t cmt) {
+    Texture* tex = mCurrentTexture;
     assert(tex);
 
-    current_tile = tile;
+    mCurrentTile = tile;
 
     GX2InitSampler(&tex->sampler, GX2_TEX_CLAMP_MODE_CLAMP,
-                   (linear_filter && current_filter_mode == FILTER_LINEAR) ? GX2_TEX_XY_FILTER_MODE_LINEAR
-                                                                           : GX2_TEX_XY_FILTER_MODE_POINT);
+                   (linear_filter && mFilterMode == FILTER_LINEAR) ? GX2_TEX_XY_FILTER_MODE_LINEAR
+                                                                   : GX2_TEX_XY_FILTER_MODE_POINT);
 
     GX2InitSamplerClamping(&tex->sampler, gfx_cm_to_gx2(cms), gfx_cm_to_gx2(cmt), GX2_TEX_CLAMP_MODE_WRAP);
 
-    if (current_shader_program && current_shader_program->samplers_location[tile] != -1) {
-        GX2SetPixelSampler(&tex->sampler, current_shader_program->samplers_location[tile]);
+    if (mCurrentShaderProgram && mCurrentShaderProgram->samplers_location[tile] != -1) {
+        GX2SetPixelSampler(&tex->sampler, mCurrentShaderProgram->samplers_location[tile]);
     }
 
     tex->sampler_set = true;
 }
 
-static void gfx_gx2_set_depth_test_and_mask(bool depth_test, bool z_upd) {
-    current_depth_test = depth_test || z_upd;
-    current_depth_write = z_upd;
-    current_depth_compare_function = depth_test ? GX2_COMPARE_FUNC_LEQUAL : GX2_COMPARE_FUNC_ALWAYS;
+void GfxRenderingAPIGX2::SetDepthTestAndMask(bool depth_test, bool z_upd) {
+    mDepthTest = depth_test || z_upd;
+    mDepthWrite = z_upd;
+    mDepthCompareFunction = depth_test ? GX2_COMPARE_FUNC_LEQUAL : GX2_COMPARE_FUNC_ALWAYS;
 
-    GX2SetDepthOnlyControl(current_depth_test, current_depth_write, current_depth_compare_function);
+    GX2SetDepthOnlyControl(mDepthTest, mDepthWrite, mDepthCompareFunction);
 }
 
-static void gfx_gx2_set_zmode_decal(bool zmode_decal) {
-    current_zmode_decal = zmode_decal;
+void GfxRenderingAPIGX2::SetZmodeDecal(bool zmode_decal) {
+    mZmodeDecal = zmode_decal;
     if (zmode_decal) {
         // SSDB = SlopeScaledDepthBias 120 leads to -2 at 240p which is the same as N64 mode which has very little
         // fighting
@@ -382,15 +321,16 @@ static void gfx_gx2_set_zmode_decal(bool zmode_decal) {
         switch (CVarGetInteger("gZFightingMode", 0)) {
             // scaled z-fighting (N64 mode like)
             case 1:
-                if (current_framebuffer < used_framebuffers) {
-                    SSDB = -1.0f * (float)framebuffers[current_framebuffer].color_buffer.surface.height / n64modeFactor;
+                if (mCurrentFramebuffer < mUsedFramebuffers) {
+                    SSDB =
+                        -1.0f * (float)mFramebuffers[mCurrentFramebuffer].color_buffer.surface.height / n64modeFactor;
                 }
                 break;
             // no vanishing paths
             case 2:
-                if (current_framebuffer < used_framebuffers) {
+                if (mCurrentFramebuffer < mUsedFramebuffers) {
                     SSDB =
-                        -1.0f * (float)framebuffers[current_framebuffer].color_buffer.surface.height / noVanishFactor;
+                        -1.0f * (float)mFramebuffers[mCurrentFramebuffer].color_buffer.surface.height / noVanishFactor;
                 }
                 break;
             // disabled
@@ -399,7 +339,7 @@ static void gfx_gx2_set_zmode_decal(bool zmode_decal) {
                 SSDB = -2.0f;
         }
 
-        current_SSDB = SSDB;
+        mSSDB = SSDB;
         GX2SetPolygonOffset(SSDB, SSDB, SSDB, SSDB, 0.0f);
         GX2SetPolygonControl(GX2_FRONT_FACE_CCW, FALSE, FALSE, TRUE, GX2_POLYGON_MODE_TRIANGLE,
                              GX2_POLYGON_MODE_TRIANGLE, TRUE, TRUE, FALSE);
@@ -410,65 +350,68 @@ static void gfx_gx2_set_zmode_decal(bool zmode_decal) {
     }
 }
 
-static void gfx_gx2_set_viewport(int x, int y, int width, int height) {
-    Framebuffer& buffer = framebuffers[current_framebuffer];
+void GfxRenderingAPIGX2::SetViewport(int x, int y, int width, int height) {
+    Framebuffer& buffer = mFramebuffers[mCurrentFramebuffer];
     uint32_t buffer_height = buffer.color_buffer.surface.height;
 
-    current_viewport_x = x;
-    current_viewport_y = buffer_height - y - height;
-    current_viewport_width = width;
-    current_viewport_height = height;
+    mViewportX = x;
+    mViewportY = buffer_height - y - height;
+    mViewportWidth = width;
+    mViewportHeight = height;
 
-    GX2SetViewport(current_viewport_x, current_viewport_y, current_viewport_width, current_viewport_height, 0.0f, 1.0f);
+    GX2SetViewport(mViewportX, mViewportY, mViewportWidth, mViewportHeight, 0.0f, 1.0f);
 }
 
-static void gfx_gx2_set_scissor(int x, int y, int width, int height) {
-    Framebuffer& buffer = framebuffers[current_framebuffer];
+void GfxRenderingAPIGX2::SetScissor(int x, int y, int width, int height) {
+    Framebuffer& buffer = mFramebuffers[mCurrentFramebuffer];
     uint32_t buffer_height = buffer.color_buffer.surface.height;
     uint32_t buffer_width = buffer.color_buffer.surface.width;
 
-    current_scissor_x = std::min((uint32_t)width, (uint32_t)x);
-    current_scissor_y = std::min((uint32_t)height, buffer_height - y - height);
-    current_scissor_width = std::min((uint32_t)width, buffer_width);
-    current_scissor_height = std::min((uint32_t)height, buffer_height);
+    mScissorX = std::min((uint32_t)width, (uint32_t)x);
+    mScissorY = std::min((uint32_t)height, buffer_height - y - height);
+    mScissorWidth = std::min((uint32_t)width, buffer_width);
+    mScissorHeight = std::min((uint32_t)height, buffer_height);
 
-    GX2SetScissor(current_scissor_x, current_scissor_y, current_scissor_width, current_scissor_height);
+    GX2SetScissor(mScissorX, mScissorY, mScissorWidth, mScissorHeight);
 }
 
-static void gfx_gx2_set_use_alpha(bool use_alpha) {
-    current_use_alpha = use_alpha;
+void GfxRenderingAPIGX2::SetUseAlpha(bool use_alpha) {
+    mUseAlpha = use_alpha;
     GX2SetColorControl(GX2_LOGIC_OP_COPY, use_alpha ? 0xff : 0, FALSE, TRUE);
 }
 
-static void gfx_gx2_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
-    if (!current_shader_program) {
+void GfxRenderingAPIGX2::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
+    if (!mCurrentShaderProgram) {
         return;
     }
 
     size_t vbo_len = sizeof(float) * buf_vbo_len;
 
-    if (draw_ptr + vbo_len >= draw_buffer + DRAW_BUFFER_SIZE) {
+    if (mDrawPtr + vbo_len >= mDrawBuffer + DRAW_BUFFER_SIZE) {
         printf("Waiting on GPU!!!\n");
         GX2DrawDone();
-        draw_ptr = draw_buffer;
+        mDrawPtr = mDrawBuffer;
     }
 
-    float* new_vbo = (float*)draw_ptr;
-    draw_ptr += ALIGN(vbo_len, GX2_VERTEX_BUFFER_ALIGNMENT);
+    float* new_vbo = (float*)mDrawPtr;
+    mDrawPtr += ALIGN(vbo_len, GX2_VERTEX_BUFFER_ALIGNMENT);
 
     OSBlockMove(new_vbo, buf_vbo, vbo_len, FALSE);
     GX2Invalidate(GX2_INVALIDATE_MODE_CPU_ATTRIBUTE_BUFFER, new_vbo, vbo_len);
 
-    GX2SetAttribBuffer(0, vbo_len, current_shader_program->group.stride, new_vbo);
+    GX2SetAttribBuffer(0, vbo_len, mCurrentShaderProgram->group.stride, new_vbo);
     GX2DrawEx(GX2_PRIMITIVE_MODE_TRIANGLES, 3 * buf_vbo_num_tris, 0, 1);
 }
 
-static void gfx_gx2_init(void) {
-    // Init the default framebuffer
-    used_framebuffers = 1;
-    Framebuffer& main_framebuffer = framebuffers[0];
+void GfxRenderingAPIGX2::Init() {
+    mViewportWidth = mScissorWidth = WIIU_DEFAULT_FB_WIDTH;
+    mViewportHeight = mScissorHeight = WIIU_DEFAULT_FB_HEIGHT;
 
-    gfx_gx2_init_framebuffer(&main_framebuffer, WIIU_DEFAULT_FB_WIDTH, WIIU_DEFAULT_FB_HEIGHT);
+    // Init the default framebuffer
+    mUsedFramebuffers = 1;
+    Framebuffer& main_framebuffer = mFramebuffers[0];
+
+    InitFramebuffer(&main_framebuffer, WIIU_DEFAULT_FB_WIDTH, WIIU_DEFAULT_FB_HEIGHT);
 
     GX2CalcSurfaceSizeAndAlignment(&main_framebuffer.color_buffer.surface);
     GX2InitColorBufferRegs(&main_framebuffer.color_buffer);
@@ -488,29 +431,29 @@ static void gfx_gx2_init(void) {
     main_framebuffer.imtex.Sampler = &main_framebuffer.sampler;
 
     // create a linear aligned copy of the depth buffer to read pixels to
-    memcpy(&depthReadBuffer, &main_framebuffer.depth_buffer, sizeof(GX2DepthBuffer));
+    memcpy(&mDepthReadBuffer, &main_framebuffer.depth_buffer, sizeof(GX2DepthBuffer));
 
-    depthReadBuffer.surface.tileMode = GX2_TILE_MODE_LINEAR_ALIGNED;
-    depthReadBuffer.surface.width = 32;
-    depthReadBuffer.surface.height = 1;
+    mDepthReadBuffer.surface.tileMode = GX2_TILE_MODE_LINEAR_ALIGNED;
+    mDepthReadBuffer.surface.width = 32;
+    mDepthReadBuffer.surface.height = 1;
 
-    GX2CalcSurfaceSizeAndAlignment(&depthReadBuffer.surface);
+    GX2CalcSurfaceSizeAndAlignment(&mDepthReadBuffer.surface);
 
-    depthReadBuffer.surface.image =
-        gfx_wiiu_alloc_mem1(depthReadBuffer.surface.alignment, depthReadBuffer.surface.imageSize);
-    assert(depthReadBuffer.surface.image);
-    GX2Invalidate(GX2_INVALIDATE_MODE_CPU | GX2_INVALIDATE_MODE_DEPTH_BUFFER, depthReadBuffer.surface.image,
-                  depthReadBuffer.surface.imageSize);
+    mDepthReadBuffer.surface.image =
+        gfx_wiiu_alloc_mem1(mDepthReadBuffer.surface.alignment, mDepthReadBuffer.surface.imageSize);
+    assert(mDepthReadBuffer.surface.image);
+    GX2Invalidate(GX2_INVALIDATE_MODE_CPU | GX2_INVALIDATE_MODE_DEPTH_BUFFER, mDepthReadBuffer.surface.image,
+                  mDepthReadBuffer.surface.imageSize);
 
     GX2SetColorBuffer(&main_framebuffer.color_buffer, GX2_RENDER_TARGET_0);
     GX2SetDepthBuffer(&main_framebuffer.depth_buffer);
 
-    current_framebuffer = 0;
+    mCurrentFramebuffer = 0;
 
     // allocate draw buffer
-    draw_buffer = (uint8_t*)memalign(GX2_VERTEX_BUFFER_ALIGNMENT, DRAW_BUFFER_SIZE);
-    assert(draw_buffer);
-    draw_ptr = draw_buffer;
+    mDrawBuffer = (uint8_t*)memalign(GX2_VERTEX_BUFFER_ALIGNMENT, DRAW_BUFFER_SIZE);
+    assert(mDrawBuffer);
+    mDrawPtr = mDrawBuffer;
 
     GX2SetRasterizerClipControl(TRUE, FALSE);
 
@@ -522,16 +465,16 @@ static void gfx_gx2_init(void) {
     gfx_wiiu_set_context_state();
 }
 
-void gfx_gx2_shutdown(void) {
+GfxRenderingAPIGX2::~GfxRenderingAPIGX2() {
     if (has_foreground) {
         GX2DrawDone();
 
-        if (depthReadBuffer.surface.image) {
-            gfx_wiiu_free_mem1(depthReadBuffer.surface.image);
-            depthReadBuffer.surface.image = nullptr;
+        if (mDepthReadBuffer.surface.image) {
+            gfx_wiiu_free_mem1(mDepthReadBuffer.surface.image);
+            mDepthReadBuffer.surface.image = nullptr;
         }
 
-        for (auto& buffer : framebuffers) {
+        for (auto& buffer : mFramebuffers) {
             if (buffer.texture.surface.image) {
                 if (buffer.colorBufferMem1) {
                     gfx_wiiu_free_mem1(buffer.texture.surface.image);
@@ -552,33 +495,33 @@ void gfx_gx2_shutdown(void) {
         }
     }
 
-    if (draw_buffer) {
-        free(draw_buffer);
-        draw_buffer = nullptr;
-        draw_ptr = nullptr;
+    if (mDrawBuffer) {
+        free(mDrawBuffer);
+        mDrawBuffer = nullptr;
+        mDrawPtr = nullptr;
     }
 
     GX2Util::Shutdown();
 }
 
-static void gfx_gx2_on_resize(void) {
+void GfxRenderingAPIGX2::OnResize() {
 }
 
-static void gfx_gx2_start_frame(void) {
+void GfxRenderingAPIGX2::StartFrame() {
     // Restore state since ImGui modified it when rendering
-    GX2SetViewport(current_viewport_x, current_viewport_y, current_viewport_width, current_viewport_height, 0.0f, 1.0f);
-    GX2SetScissor(current_scissor_x, current_scissor_y, current_scissor_width, current_scissor_height);
+    GX2SetViewport(mViewportX, mViewportY, mViewportWidth, mViewportHeight, 0.0f, 1.0f);
+    GX2SetScissor(mScissorX, mScissorY, mScissorWidth, mScissorHeight);
 
-    GX2SetColorControl(GX2_LOGIC_OP_COPY, current_use_alpha ? 0xff : 0, FALSE, TRUE);
+    GX2SetColorControl(GX2_LOGIC_OP_COPY, mUseAlpha ? 0xff : 0, FALSE, TRUE);
 
     GX2SetBlendControl(GX2_RENDER_TARGET_0, GX2_BLEND_MODE_SRC_ALPHA, GX2_BLEND_MODE_INV_SRC_ALPHA,
                        GX2_BLEND_COMBINE_MODE_ADD, FALSE, GX2_BLEND_MODE_ZERO, GX2_BLEND_MODE_ZERO,
                        GX2_BLEND_COMBINE_MODE_ADD);
 
-    GX2SetDepthOnlyControl(current_depth_test, current_depth_write, current_depth_compare_function);
+    GX2SetDepthOnlyControl(mDepthTest, mDepthWrite, mDepthCompareFunction);
 
-    if (current_zmode_decal) {
-        GX2SetPolygonOffset(current_SSDB, current_SSDB, current_SSDB, current_SSDB, 0.0f);
+    if (mZmodeDecal) {
+        GX2SetPolygonOffset(mSSDB, mSSDB, mSSDB, mSSDB, 0.0f);
         GX2SetPolygonControl(GX2_FRONT_FACE_CCW, FALSE, FALSE, TRUE, GX2_POLYGON_MODE_TRIANGLE,
                              GX2_POLYGON_MODE_TRIANGLE, TRUE, TRUE, FALSE);
     } else {
@@ -587,28 +530,28 @@ static void gfx_gx2_start_frame(void) {
                              GX2_POLYGON_MODE_TRIANGLE, FALSE, FALSE, FALSE);
     }
 
-    frame_count++;
+    mFrameCount++;
 }
 
-static void gfx_gx2_end_frame(void) {
-    draw_ptr = draw_buffer;
+void GfxRenderingAPIGX2::EndFrame() {
+    mDrawPtr = mDrawBuffer;
 
-    Framebuffer& main_framebuffer = framebuffers[0];
+    Framebuffer& main_framebuffer = mFramebuffers[0];
 
     GX2CopyColorBufferToScanBuffer(&main_framebuffer.color_buffer, GX2_SCAN_TARGET_TV);
     GX2CopyColorBufferToScanBuffer(&main_framebuffer.color_buffer, GX2_SCAN_TARGET_DRC);
 }
 
-static void gfx_gx2_finish_render(void) {
+void GfxRenderingAPIGX2::FinishRender() {
 }
 
-static int gfx_gx2_create_framebuffer(void) {
-    assert(used_framebuffers < framebuffers.size());
+int GfxRenderingAPIGX2::CreateFramebuffer() {
+    assert(mUsedFramebuffers < mFramebuffers.size());
 
-    std::size_t i = used_framebuffers;
-    used_framebuffers++;
+    std::size_t i = mUsedFramebuffers;
+    mUsedFramebuffers++;
 
-    Framebuffer& buffer = framebuffers[i];
+    Framebuffer& buffer = mFramebuffers[i];
 
     GX2InitSampler(&buffer.sampler, GX2_TEX_CLAMP_MODE_WRAP, GX2_TEX_XY_FILTER_MODE_LINEAR);
 
@@ -618,15 +561,15 @@ static int gfx_gx2_create_framebuffer(void) {
     return i;
 }
 
-static void gfx_gx2_update_framebuffer_parameters(int fb, uint32_t width, uint32_t height, uint32_t msaa_level,
-                                                  bool opengl_invert_y, bool render_target, bool has_depth_buffer,
-                                                  bool can_extract_depth) {
+void GfxRenderingAPIGX2::UpdateFramebufferParameters(int fb, uint32_t width, uint32_t height, uint32_t msaa_level,
+                                                     bool opengl_invert_y, bool render_target, bool has_depth_buffer,
+                                                     bool can_extract_depth) {
     // we don't support updating the main buffer (fb 0)
     if (fb == 0) {
         return;
     }
 
-    Framebuffer& buffer = framebuffers[fb];
+    Framebuffer& buffer = mFramebuffers[fb];
 
     if (buffer.texture.surface.width == width && buffer.texture.surface.height == height) {
         return;
@@ -653,7 +596,7 @@ static void gfx_gx2_update_framebuffer_parameters(int fb, uint32_t width, uint32
         buffer.depth_buffer.surface.image = nullptr;
     }
 
-    gfx_gx2_init_framebuffer(&buffer, width, height);
+    InitFramebuffer(&buffer, width, height);
 
     GX2CalcSurfaceSizeAndAlignment(&buffer.depth_buffer.surface);
     GX2InitDepthBufferRegs(&buffer.depth_buffer);
@@ -709,21 +652,21 @@ static void gfx_gx2_update_framebuffer_parameters(int fb, uint32_t width, uint32
     buffer.color_buffer.surface.image = buffer.texture.surface.image;
 }
 
-void gfx_gx2_start_draw_to_framebuffer(int fb, float noise_scale) {
-    Framebuffer& buffer = framebuffers[fb];
+void GfxRenderingAPIGX2::StartDrawToFramebuffer(int fb, float noise_scale) {
+    Framebuffer& buffer = mFramebuffers[fb];
 
     if (noise_scale != 0.0f) {
-        current_noise_scale = 1.0f / noise_scale;
+        mNoiseScale = 1.0f / noise_scale;
     }
 
     GX2SetColorBuffer(&buffer.color_buffer, GX2_RENDER_TARGET_0);
     GX2SetDepthBuffer(&buffer.depth_buffer);
 
-    current_framebuffer = fb;
+    mCurrentFramebuffer = fb;
 }
 
-void gfx_gx2_clear_framebuffer(bool color, bool depth) {
-    Framebuffer& buffer = framebuffers[current_framebuffer];
+void GfxRenderingAPIGX2::ClearFramebuffer(bool color, bool depth) {
+    Framebuffer& buffer = mFramebuffers[mCurrentFramebuffer];
 
     if (color) {
         GX2ClearColor(&buffer.color_buffer, 0.0f, 0.0f, 0.0f, 1.0f);
@@ -737,9 +680,9 @@ void gfx_gx2_clear_framebuffer(bool color, bool depth) {
     gfx_wiiu_set_context_state();
 }
 
-void gfx_gx2_resolve_msaa_color_buffer(int fb_id_target, int fb_id_source) {
-    Framebuffer& src_buffer = framebuffers[fb_id_source];
-    Framebuffer& target_buffer = framebuffers[fb_id_target];
+void GfxRenderingAPIGX2::ResolveMSAAColorBuffer(int fb_id_target, int fb_id_source) {
+    Framebuffer& src_buffer = mFramebuffers[fb_id_source];
+    Framebuffer& target_buffer = mFramebuffers[fb_id_target];
 
     if (src_buffer.color_buffer.surface.aa == GX2_AA_MODE1X) {
         GX2CopySurface(&src_buffer.color_buffer.surface, src_buffer.color_buffer.viewMip,
@@ -751,29 +694,29 @@ void gfx_gx2_resolve_msaa_color_buffer(int fb_id_target, int fb_id_source) {
     }
 }
 
-void* gfx_gx2_get_framebuffer_texture_id(int fb_id) {
-    Framebuffer& buffer = framebuffers[fb_id];
+void* GfxRenderingAPIGX2::GetFramebufferTextureId(int fb_id) {
+    Framebuffer& buffer = mFramebuffers[fb_id];
 
     return &buffer.imtex;
 }
 
-void gfx_gx2_select_texture_fb(int fb) {
-    Framebuffer& buffer = framebuffers[fb];
+void GfxRenderingAPIGX2::SelectTextureFb(int fb) {
+    Framebuffer& buffer = mFramebuffers[fb];
 
-    assert(current_shader_program);
-    uint32_t location = current_shader_program->samplers_location[0];
+    assert(mCurrentShaderProgram);
+    uint32_t location = mCurrentShaderProgram->samplers_location[0];
     GX2SetPixelTexture(&buffer.texture, location);
     GX2SetPixelSampler(&buffer.sampler, location);
 }
 
-void gfx_gx2_copy_framebuffer(int fb_dst_id, int fb_src_id, int srcX0, int srcY0, int srcX1, int srcY1, int dstX0,
-                              int dstY0, int dstX1, int dstY1) {
-    if (fb_dst_id >= used_framebuffers || fb_src_id >= used_framebuffers) {
+void GfxRenderingAPIGX2::CopyFramebuffer(int fb_dst_id, int fb_src_id, int srcX0, int srcY0, int srcX1, int srcY1,
+                                         int dstX0, int dstY0, int dstX1, int dstY1) {
+    if ((std::size_t)fb_dst_id >= mUsedFramebuffers || (std::size_t)fb_src_id >= mUsedFramebuffers) {
         return;
     }
 
-    Framebuffer& dst_buffer = framebuffers[fb_dst_id];
-    Framebuffer& src_buffer = framebuffers[fb_src_id];
+    Framebuffer& dst_buffer = mFramebuffers[fb_dst_id];
+    Framebuffer& src_buffer = mFramebuffers[fb_src_id];
 
     int32_t fb_width = src_buffer.color_buffer.surface.width;
     int32_t fb_height = src_buffer.color_buffer.surface.height;
@@ -789,12 +732,12 @@ void gfx_gx2_copy_framebuffer(int fb_dst_id, int fb_src_id, int srcX0, int srcY0
     gfx_wiiu_set_context_state();
 }
 
-void gfx_gx2_read_framebuffer_to_cpu(int fb_id, uint32_t width, uint32_t height, uint16_t* rgba16_buf) {
-    if (fb_id >= used_framebuffers) {
+void GfxRenderingAPIGX2::ReadFramebufferToCPU(int fb_id, uint32_t width, uint32_t height, uint16_t* rgba16_buf) {
+    if ((std::size_t)fb_id >= mUsedFramebuffers) {
         return;
     }
 
-    Framebuffer& buffer = framebuffers[fb_id];
+    Framebuffer& buffer = mFramebuffers[fb_id];
 
     // Create a temporary linear surface in the correct format
     GX2Surface surface;
@@ -818,16 +761,16 @@ void gfx_gx2_read_framebuffer_to_cpu(int fb_id, uint32_t width, uint32_t height,
 
     gfx_wiiu_set_context_state();
 
-    for (int y = 0; y < height; y++) {
+    for (uint32_t y = 0; y < height; y++) {
         memcpy(rgba16_buf + y * width, ((uint16_t*)surface.image) + y * surface.pitch, width * 2);
     }
 
     free(surface.image);
 }
 
-static std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
-gfx_gx2_get_pixel_depth(int fb_id, const std::set<std::pair<float, float>>& coordinates) {
-    Framebuffer& buffer = framebuffers[fb_id];
+std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
+GfxRenderingAPIGX2::GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) {
+    Framebuffer& buffer = mFramebuffers[fb_id];
 
     std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> res;
     GX2Rect srcRects[25];
@@ -850,15 +793,15 @@ gfx_gx2_get_pixel_depth(int fb_id, const std::set<std::pair<float, float>>& coor
                                    (int32_t)(buffer.depth_buffer.surface.height - y) + 1 };
 
             // dst points will be spread over the x-axis of the buffer
-            dstPoints[i] = GX2Point{ i, 0 };
+            dstPoints[i] = GX2Point{ (int32_t)i, 0 };
         }
 
         // Invalidate the buffer first
-        GX2Invalidate(GX2_INVALIDATE_MODE_CPU | GX2_INVALIDATE_MODE_DEPTH_BUFFER, depthReadBuffer.surface.image,
-                      depthReadBuffer.surface.imageSize);
+        GX2Invalidate(GX2_INVALIDATE_MODE_CPU | GX2_INVALIDATE_MODE_DEPTH_BUFFER, mDepthReadBuffer.surface.image,
+                      mDepthReadBuffer.surface.imageSize);
 
         // Perform the copy
-        GX2CopySurfaceEx(&buffer.depth_buffer.surface, 0, 0, &depthReadBuffer.surface, 0, 0, numRects, srcRects,
+        GX2CopySurfaceEx(&buffer.depth_buffer.surface, 0, 0, &mDepthReadBuffer.surface, 0, 0, numRects, srcRects,
                          dstPoints);
 
         // Wait for draws to be done and restore context, in case GPU was used
@@ -867,7 +810,7 @@ gfx_gx2_get_pixel_depth(int fb_id, const std::set<std::pair<float, float>>& coor
 
         // read the pixels from the depthReadBuffer
         for (size_t i = 0; i < numRects; ++i) {
-            uint32_t tmp = __builtin_bswap32(*((uint32_t*)depthReadBuffer.surface.image + i));
+            uint32_t tmp = __builtin_bswap32(*((uint32_t*)mDepthReadBuffer.surface.image + i));
             float val = std::bit_cast<float>(tmp);
 
             const auto& c = *std::next(coordinates.begin(), num_coordinates + i);
@@ -878,64 +821,33 @@ gfx_gx2_get_pixel_depth(int fb_id, const std::set<std::pair<float, float>>& coor
     return res;
 }
 
-void gfx_gx2_set_texture_filter(FilteringMode mode) {
+void GfxRenderingAPIGX2::SetTextureFilter(FilteringMode mode) {
     // three-point is not implemented in the shaders yet
     if (mode == FILTER_THREE_POINT) {
         mode = FILTER_LINEAR;
     }
 
-    current_filter_mode = mode;
+    mFilterMode = mode;
     gfx_texture_cache_clear();
 }
 
-FilteringMode gfx_gx2_get_texture_filter(void) {
-    return current_filter_mode;
+FilteringMode GfxRenderingAPIGX2::GetTextureFilter() {
+    return mFilterMode;
 }
 
-ImGui_ImplGX2_Texture* gfx_gx2_texture_for_imgui(uint32_t texture_id) {
-    struct Texture* tex = (struct Texture*)texture_id;
-    return &tex->imtex;
+ImTextureID GfxRenderingAPIGX2::GetTextureById(int id) {
+    Texture* tex = (Texture*)id;
+    return reinterpret_cast<ImTextureID>(&tex->imtex);
 }
 
-void gfx_gx2_enable_srgb_mode() {
+void GfxRenderingAPIGX2::SetSrgbMode() {
 }
 
-struct GfxRenderingAPI gfx_gx2_api = { gfx_gx2_get_name,
-                                       gfx_gx2_get_max_texture_size,
-                                       gfx_gx2_get_clip_parameters,
-                                       gfx_gx2_unload_shader,
-                                       gfx_gx2_load_shader,
-                                       gfx_gx2_create_and_load_new_shader,
-                                       gfx_gx2_lookup_shader,
-                                       gfx_gx2_shader_get_info,
-                                       gfx_gx2_new_texture,
-                                       gfx_gx2_select_texture,
-                                       gfx_gx2_upload_texture,
-                                       gfx_gx2_set_sampler_parameters,
-                                       gfx_gx2_set_depth_test_and_mask,
-                                       gfx_gx2_set_zmode_decal,
-                                       gfx_gx2_set_viewport,
-                                       gfx_gx2_set_scissor,
-                                       gfx_gx2_set_use_alpha,
-                                       gfx_gx2_draw_triangles,
-                                       gfx_gx2_init,
-                                       gfx_gx2_on_resize,
-                                       gfx_gx2_start_frame,
-                                       gfx_gx2_end_frame,
-                                       gfx_gx2_finish_render,
-                                       gfx_gx2_create_framebuffer,
-                                       gfx_gx2_update_framebuffer_parameters,
-                                       gfx_gx2_start_draw_to_framebuffer,
-                                       gfx_gx2_copy_framebuffer,
-                                       gfx_gx2_clear_framebuffer,
-                                       gfx_gx2_read_framebuffer_to_cpu,
-                                       gfx_gx2_resolve_msaa_color_buffer,
-                                       gfx_gx2_get_pixel_depth,
-                                       gfx_gx2_get_framebuffer_texture_id,
-                                       gfx_gx2_select_texture_fb,
-                                       gfx_gx2_delete_texture,
-                                       gfx_gx2_set_texture_filter,
-                                       gfx_gx2_get_texture_filter,
-                                       gfx_gx2_enable_srgb_mode };
+void GfxRenderingAPIGX2::SetCurrentPrimDepth(float depth) {
+    // GX2 has no prim-depth uniform; store for interface completeness.
+    mCurrentPrimDepth = depth;
+}
+
+} // namespace Fast
 
 #endif

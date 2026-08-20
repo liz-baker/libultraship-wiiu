@@ -84,10 +84,14 @@ static void ImGui_ImplWiiU_AppearKeyboardInput() {
     ImGui_ImplWiiU_Data* bd = ImGui_ImplWiiU_GetBackendData();
     ImGuiInputTextState* state = ImGui::GetInputTextState(ImGui::GetActiveID());
     if (state) {
+        // ImGui 1.91 removed the wide (UTF-16) input-text buffer (TextW); the
+        // live buffer is now UTF-8 (TextA). swkbd wants a char16_t* prefill, so
+        // skip prefilling the initial text for now rather than converting.
+        // TODO: convert state->TextA (UTF-8) to UTF-16 to restore prefill.
         if (!(state->Flags & ImGuiInputTextFlags_AlwaysOverwrite))
-            bd->AppearArg.inputFormArg.initialText = (char16_t*)state->TextW.Data;
+            bd->AppearArg.inputFormArg.initialText = nullptr;
 
-        bd->AppearArg.inputFormArg.maxTextLength = state->BufCapacityA;
+        bd->AppearArg.inputFormArg.maxTextLength = state->BufCapacity;
         bd->AppearArg.inputFormArg.higlightInitialText = !!(state->Flags & ImGuiInputTextFlags_AutoSelectAll);
 
         if (state->Flags & ImGuiInputTextFlags_Password)

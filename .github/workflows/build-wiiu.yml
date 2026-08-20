@@ -57,10 +57,6 @@ jobs:
           cmake --no-warn-unused-cli -H. -Bbuild-wiiu -GNinja \
             -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/WiiU.cmake \
             -DCMAKE_BUILD_TYPE:STRING=Release
-      # The core Wii U library (with the GX2 renderer gated behind LUS_WIIU_GX2)
-      # now compiles and links end to end, so this step is blocking. The GX2
-      # renderer conversion and native input/audio are tracked in
-      # docs/wiiu-port-status.md.
       - name: Build
         run: |
           export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}

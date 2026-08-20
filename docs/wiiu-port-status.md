@@ -49,29 +49,48 @@ unavailable on `CafeOS`:
 
 ## Status
 
-**Phase A is complete.** The core `libultraship.a` compiles and links end to end
-for `CafeOS` (GX2 renderer gated behind `LUS_WIIU_GX2`, off by default), and the
-`build-wiiu` CI compile is now a blocking check. SDL3 is fully guarded out of the
-always-compiled layers.
+**Phases A and B are complete.** The core `libultraship.a` compiles and links end
+to end for `CafeOS`, including the GX2 renderer and Wii U window backend. SDL3 is
+fully guarded out of the always-compiled layers, and the single blocking
+`build-wiiu` CI job covers the whole console build.
+
+### What Phase B changed
+
+- `gfx_gx2` is now `GfxRenderingAPIGX2 : public Fast::GfxRenderingAPI`, with the
+  former file-static state and the `ShaderProgram` / `Texture` / `Framebuffer`
+  types moved onto the class. It implements the methods the old C API lacked —
+  `ClearShaderCache`, `GetTextureById` (replacing `gfx_gx2_texture_for_imgui`)
+  and `SetCurrentPrimDepth` (store-only; GX2 has no prim-depth uniform) — and the
+  old `gfx_gx2_shutdown` became the destructor.
+- `gfx_wiiu` is now `GfxWindowBackendWiiU : public Fast::GfxWindowBackend`
+  (`start_frame` → `IsFrameReady`, plus the new mouse/dimension/monitor members).
+  The MEM1 / foreground heap and context-state helpers stay free functions shared
+  with the renderer. Teardown is split across `Destroy()` (native input), the
+  renderer destructor (GX2 resources) and the window backend destructor
+  (`GX2Shutdown` + `WHBProcShutdown`) to preserve ordering.
+- `FAST3D_GX2` was added to the `WindowBackend` enum and wired into
+  `Fast3dWindow` (backend registration, `InitWindowManager`,
+  `GetWindowBackendName`) and the `Fast3dGui` ImGui backend switches.
+- `gx2_shader_gen.c` became `.cpp` so it can use the now-C++ `CCFeatures`, and the
+  GX2/Wii U ImGui backends were ported to the current ImGui.
+- The `LUS_WIIU_GX2` option was removed. It existed only so Phase A could compile
+  the core while the GX2 sources were still unconverted; every use was paired with
+  `__WIIU__`, and with it off the Wii U build registered `FAST3D_SDL_OPENGL` as
+  its only backend even though SDL is excluded on `CafeOS`. `__WIIU__` / `CafeOS`
+  is now the single gate.
 
 ## Remaining work
 
-The GX2 renderer / window backend are still written against the old C
-struct-of-function-pointers Fast3D API. They are compiled only when
-`-DLUS_WIIU_GX2=ON` is passed, so the rest of the port was brought to a
-clean compile first. Outstanding items:
+1. **Phase C — native input/audio.** Wire native VPAD/KPAD input into the
+   controller layer (a Wii U physical-device backend replacing the SDL mapping)
+   and add a native AX audio player, so the build is functional, not just
+   compiling.
+2. **Phase D — finalize CI.** Re-enable the desktop `build-validation` /
+   `test-validation` PR triggers (see the revert checklist in `CLAUDE.md`).
+3. Runtime validation on real hardware — the port is compile-clean, but the GX2
+   renderer has not yet been exercised on a console.
 
-1. Convert `gfx_gx2` to a `GfxRenderingAPIGX2 : public Fast::GfxRenderingAPI`
-   class and `gfx_wiiu` to a `GfxWindowBackendWiiU : public Fast::GfxWindowBackend`
-   class, matching the current virtual interfaces.
-2. Fix include paths / renamed headers (`gfx_pc.h`, `gfx_cc.h`,
-   `consolevariablebridge.h`, etc.) for the new layout.
-3. Add a `FAST3D_GX2` entry to the `WindowBackend` enum and wire it into
-   `Fast3dWindow`'s backend selection.
-4. Finish guarding remaining SDL3 usages in `src/ship` (audio, core, utils) and
-   provide native replacements where needed.
-5. Verify the `ppc-tinyxml2` / `ppc-libzip` portlibs satisfy the core's
-   `find_package` calls on `CafeOS`.
-
-Progress is driven through the `build-wiiu` CI job, which surfaces the concrete
-remaining compile errors on real toolchain output.
+Progress is driven through CI on real devkitPPC output: the devkitPPC toolchain
+image cannot be pulled from the Claude Code sandbox (its Docker Hub blob CDN is
+blocked by the egress policy), so the `build-wiiu` job is the compile loop for
+the Wii U code.
