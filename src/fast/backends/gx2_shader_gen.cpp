@@ -898,8 +898,7 @@ int gx2GenerateShaderGroup(struct ShaderGroup* group, struct CCFeatures* cc_feat
     }
 
     GX2InitFetchShaderEx(&group->fetchShader, (uint8_t*)group->fetchShader.program, group->numAttributes,
-                         group->attributes,
-                         GX2_FETCH_SHADER_TESSELLATION_NONE, GX2_TESSELLATION_MODE_DISCRETE);
+                         group->attributes, GX2_FETCH_SHADER_TESSELLATION_NONE, GX2_TESSELLATION_MODE_DISCRETE);
 
     // invalidate all programs
     GX2Invalidate(GX2_INVALIDATE_MODE_CPU_SHADER, group->vertexShader.program, group->vertexShader.size);
