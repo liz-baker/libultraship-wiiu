@@ -4,12 +4,8 @@
 */
 #pragma once
 
-#include "gfx_cc.h"
+#include "fast/interpreter.h"
 #include <gx2/shaders.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 struct ShaderGroup {
     GX2VertexShader vertexShader;
@@ -22,10 +18,6 @@ struct ShaderGroup {
     GX2AttribStream attributes[13];
 };
 
-int gx2GenerateShaderGroup(struct ShaderGroup* group, struct CCFeatures* cc_features);
+int gx2GenerateShaderGroup(struct ShaderGroup* group, Fast::CCFeatures* cc_features);
 
 void gx2FreeShaderGroup(struct ShaderGroup* group);
-
-#ifdef __cplusplus
-}
-#endif

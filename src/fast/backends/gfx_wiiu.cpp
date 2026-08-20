@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <malloc.h>
+#include <cassert>
 
 #include <coreinit/time.h>
 #include <coreinit/foreground.h>
@@ -27,18 +28,11 @@
 #include <vpad/input.h>
 #include <padscore/kpad.h>
 
-#ifndef _LANGUAGE_C
-#define _LANGUAGE_C
-#endif
+#include "fast/backends/gfx_wiiu.h"
+#include "fast/Fast3dGui.h"
 
-#include "gfx_window_manager_api.h"
-#include "gfx_pc.h"
-#include "gfx_gx2.h"
-#include "gfx_wiiu.h"
-
-#include <port/wiiu/ImGui/imgui_impl_wiiu.h>
-#include "port/wiiu/WiiUImpl.h"
-#include "libultraship/classes.h"
+#include "ship/port/wiiu/ImGui/imgui_impl_wiiu.h"
+#include "ship/port/wiiu/WiiUImpl.h"
 
 static MEMHeapHandle heap_MEM1 = nullptr;
 static MEMHeapHandle heap_foreground = nullptr;
@@ -90,11 +84,9 @@ bool gfx_wiiu_init_mem1(void) {
     return true;
 }
 
-void gfx_wiiu_close(void) {
-}
-
 void gfx_wiiu_destroy_mem1(void) {
     MEMHeapHandle heap = MEMGetBaseHeapHandle(MEM_BASE_HEAP_MEM1);
+    (void)heap;
 
     if (heap_MEM1) {
         MEMDestroyExpHeap(heap_MEM1);
@@ -185,6 +177,10 @@ void gfx_wiiu_free_foreground(void* block) {
     MEMFreeToExpHeap(heap_foreground, block);
 }
 
+void gfx_wiiu_set_context_state(void) {
+    GX2SetContextState(context_state);
+}
+
 static uint32_t gfx_wiiu_proc_callback_acquired(void* context) {
     has_foreground = true;
 
@@ -226,8 +222,41 @@ static uint32_t gfx_wiiu_proc_callback_released(void* context) {
     return 0;
 }
 
-static void gfx_wiiu_init(const char* game_name, const char* gfx_api_name, bool start_in_fullscreen, uint32_t width,
-                          uint32_t height, int32_t posX, int32_t posY) {
+static void gfx_wiiu_shutdown(void) {
+    if (has_foreground) {
+        gfx_wiiu_proc_callback_released(nullptr);
+        gfx_wiiu_destroy_mem1();
+    }
+
+    GX2Shutdown();
+
+    if (context_state) {
+        free(context_state);
+        context_state = nullptr;
+    }
+
+    if (command_buffer_pool) {
+        free(command_buffer_pool);
+        command_buffer_pool = nullptr;
+    }
+
+    ProcUISetMEM1Storage(nullptr, 0);
+    free(mem1_storage);
+}
+
+namespace Fast {
+
+GfxWindowBackendWiiU::GfxWindowBackendWiiU(std::shared_ptr<Fast::Fast3dGui> fast3dGui)
+    : mFast3dGui(std::move(fast3dGui)) {
+}
+
+GfxWindowBackendWiiU::~GfxWindowBackendWiiU() {
+    gfx_wiiu_shutdown();
+    WHBProcShutdown();
+}
+
+void GfxWindowBackendWiiU::Init(const char* gameName, const char* apiName, bool startFullScreen, uint32_t width,
+                                uint32_t height, int32_t posX, int32_t posY) {
     WHBProcInit();
 
     uint32_t mem1_addr, mem1_size;
@@ -299,95 +328,81 @@ static void gfx_wiiu_init(const char* game_name, const char* gfx_api_name, bool 
 
     GX2SetSwapInterval(frame_divisor);
 
-    gfx_current_dimensions.width = gfx_current_game_window_viewport.width = WIIU_DEFAULT_FB_WIDTH;
-    gfx_current_dimensions.height = gfx_current_game_window_viewport.height = WIIU_DEFAULT_FB_HEIGHT;
-
-    Ship::GuiWindowInitData window_impl;
+    Fast::GuiWindowInitData window_impl;
     window_impl.Gx2.Width = WIIU_DEFAULT_FB_WIDTH;
     window_impl.Gx2.Height = WIIU_DEFAULT_FB_HEIGHT;
-    Ship::Context::GetInstance()->GetWindow()->GetGui()->Init(window_impl);
-}
-
-static void gfx_wiiu_shutdown(void) {
-    if (has_foreground) {
-        gfx_wiiu_proc_callback_released(nullptr);
-        gfx_wiiu_destroy_mem1();
+    if (mFast3dGui) {
+        mFast3dGui->Init(window_impl);
     }
-
-    GX2Shutdown();
-
-    if (context_state) {
-        free(context_state);
-        context_state = nullptr;
-    }
-
-    if (command_buffer_pool) {
-        free(command_buffer_pool);
-        command_buffer_pool = nullptr;
-    }
-
-    ProcUISetMEM1Storage(nullptr, 0);
-    free(mem1_storage);
 }
 
-void gfx_wiiu_set_context_state(void) {
-    GX2SetContextState(context_state);
+void GfxWindowBackendWiiU::Close() {
 }
 
-static void gfx_wiiu_set_fullscreen_changed_callback(void (*on_fullscreen_changed)(bool is_now_fullscreen)) {
+void GfxWindowBackendWiiU::SetKeyboardCallbacks(bool (*onKeyDown)(int scancode), bool (*onKeyUp)(int scancode),
+                                                void (*onAllKeysUp)()) {
 }
 
-static void gfx_wiiu_set_fullscreen(bool enable) {
+void GfxWindowBackendWiiU::SetMouseCallbacks(bool (*onMouseButtonDown)(int btn), bool (*onMouseButtonUp)(int btn)) {
 }
 
-static void gfx_wiiu_get_active_window_refresh_rate(uint32_t* refresh_rate) {
-    *refresh_rate = 60;
+void GfxWindowBackendWiiU::SetFullscreenChangedCallback(void (*onFullscreenChanged)(bool is_now_fullscreen)) {
 }
 
-static void gfx_wiiu_set_cursor_visibility(bool hide) {
+void GfxWindowBackendWiiU::SetFullscreen(bool fullscreen) {
 }
 
-static void gfx_wiiu_set_mouse_pos(int32_t x, int32_t y) {
+void GfxWindowBackendWiiU::GetActiveWindowRefreshRate(uint32_t* refreshRate) {
+    *refreshRate = 60;
 }
 
-static void gfx_wiiu_get_mouse_pos(int32_t* x, int32_t* y) {
+void GfxWindowBackendWiiU::SetCursorVisibility(bool visability) {
+}
+
+void GfxWindowBackendWiiU::SetMousePos(int32_t posX, int32_t posY) {
+}
+
+void GfxWindowBackendWiiU::GetMousePos(int32_t* x, int32_t* y) {
     *x = 0;
     *y = 0;
 }
 
-static void gfx_wiiu_get_mouse_delta(int32_t* x, int32_t* y) {
+void GfxWindowBackendWiiU::GetMouseDelta(int32_t* x, int32_t* y) {
     *x = 0;
     *y = 0;
 }
 
-static void gfx_wiiu_get_mouse_wheel(float* x, float* y) {
+void GfxWindowBackendWiiU::GetMouseWheel(float* x, float* y) {
     *x = 0;
     *y = 0;
 }
 
-static bool gfx_wiiu_get_mouse_state(uint32_t btn) {
+bool GfxWindowBackendWiiU::GetMouseState(uint32_t btn) {
     return false;
 }
 
-static void gfx_wiiu_set_mouse_capture(bool capture) {
+void GfxWindowBackendWiiU::SetMouseCapture(bool capture) {
 }
 
-static bool gfx_wiiu_is_mouse_captured() {
+bool GfxWindowBackendWiiU::IsMouseCaptured() {
     return false;
 }
 
-static void gfx_wiiu_set_keyboard_callbacks(bool (*on_key_down)(int scancode), bool (*on_key_up)(int scancode),
-                                            void (*on_all_keys_up)(void)) {
-}
-
-static void gfx_wiiu_get_dimensions(uint32_t* width, uint32_t* height, int32_t* posX, int32_t* posY) {
+void GfxWindowBackendWiiU::GetDimensions(uint32_t* width, uint32_t* height, int32_t* posX, int32_t* posY) {
     *width = WIIU_DEFAULT_FB_WIDTH;
     *height = WIIU_DEFAULT_FB_HEIGHT;
     *posX = 0;
     *posY = 0;
 }
 
-static void gfx_wiiu_handle_events(void) {
+void GfxWindowBackendWiiU::SetDimensions(uint32_t width, uint32_t height, int32_t posX, int32_t posY) {
+}
+
+Ship::WindowRect GfxWindowBackendWiiU::GetPrimaryMonitorRect() {
+    return Ship::WindowRect{ 0, 0, WIIU_DEFAULT_FB_WIDTH, WIIU_DEFAULT_FB_HEIGHT };
+}
+
+void GfxWindowBackendWiiU::HandleEvents() {
     Ship::WiiU::Update();
 
     ImGui_ImplWiiU_ControllerInput input{};
@@ -406,12 +421,14 @@ static void gfx_wiiu_handle_events(void) {
         }
     }
 
-    Ship::WindowEvent event_impl;
+    Fast::WindowEvent event_impl;
     event_impl.Gx2.Input = &input;
-    Ship::Context::GetInstance()->GetWindow()->GetGui()->HandleWindowEvents(event_impl);
+    if (mFast3dGui) {
+        mFast3dGui->HandleWindowEvents(event_impl);
+    }
 }
 
-static bool gfx_wiiu_start_frame(void) {
+bool GfxWindowBackendWiiU::IsFrameReady() {
     uint32_t swap_count, flip_count;
     OSTime last_flip, last_vsync;
     uint32_t wait_count = 0;
@@ -435,7 +452,7 @@ static bool gfx_wiiu_start_frame(void) {
     return true;
 }
 
-static void gfx_wiiu_swap_buffers_begin(void) {
+void GfxWindowBackendWiiU::SwapBuffersBegin() {
     GX2SwapScanBuffers();
     GX2Flush();
 
@@ -445,17 +462,21 @@ static void gfx_wiiu_swap_buffers_begin(void) {
     GX2SetDRCEnable(TRUE);
 }
 
-static void gfx_wiiu_swap_buffers_end(void) {
+void GfxWindowBackendWiiU::SwapBuffersEnd() {
     static OSTick tick = 0;
     frametime = OSTicksToMicroseconds(OSGetSystemTick() - tick);
     tick = OSGetSystemTick();
 }
 
-static double gfx_wiiu_get_time(void) {
+double GfxWindowBackendWiiU::GetTime() {
     return 0.0;
 }
 
-static void gfx_wiiu_set_target_fps(int fps) {
+int GfxWindowBackendWiiU::GetTargetFps() {
+    return mTargetFps;
+}
+
+void GfxWindowBackendWiiU::SetTargetFps(int fps) {
     // use the nearest divisor
     int divisor = 60 / fps;
     if (divisor < 1) {
@@ -466,61 +487,36 @@ static void gfx_wiiu_set_target_fps(int fps) {
         GX2SetSwapInterval(divisor);
         frame_divisor = divisor;
     }
+
+    mTargetFps = fps;
 }
 
-static void gfx_wiiu_set_maximum_frame_latency(int latency) {
+void GfxWindowBackendWiiU::SetMaxFrameLatency(int latency) {
 }
 
-static const char* gfx_wiiu_get_key_name(int scancode) {
+const char* GfxWindowBackendWiiU::GetKeyName(int scancode) {
     return "";
 }
 
-bool gfx_wiiu_can_disable_vsync() {
+bool GfxWindowBackendWiiU::CanDisableVsync() {
     return false;
 }
 
-bool gfx_wiiu_is_running(void) {
+bool GfxWindowBackendWiiU::IsRunning() {
     return WHBProcIsRunning();
 }
 
-void gfx_wiiu_destroy(void) {
+void GfxWindowBackendWiiU::Destroy() {
+    // Native input teardown. GX2 resource teardown happens in the renderer's
+    // destructor, and GX2Shutdown / WHBProcShutdown in this backend's
+    // destructor — both run after this Destroy() call (see Fast3dWindow dtor).
     Ship::WiiU::Exit();
-
-    gfx_gx2_shutdown();
-    gfx_wiiu_shutdown();
-    WHBProcShutdown();
 }
 
-bool gfx_wiiu_is_fullscreen(void) {
+bool GfxWindowBackendWiiU::IsFullscreen() {
     return true;
 }
 
-struct GfxWindowManagerAPI gfx_wiiu = { gfx_wiiu_init,
-                                        gfx_wiiu_close,
-                                        gfx_wiiu_set_keyboard_callbacks,
-                                        gfx_wiiu_set_fullscreen_changed_callback,
-                                        gfx_wiiu_set_fullscreen,
-                                        gfx_wiiu_get_active_window_refresh_rate,
-                                        gfx_wiiu_set_cursor_visibility,
-                                        gfx_wiiu_set_mouse_pos,
-                                        gfx_wiiu_get_mouse_pos,
-                                        gfx_wiiu_get_mouse_delta,
-                                        gfx_wiiu_get_mouse_wheel,
-                                        gfx_wiiu_get_mouse_state,
-                                        gfx_wiiu_set_mouse_capture,
-                                        gfx_wiiu_is_mouse_captured,
-                                        gfx_wiiu_get_dimensions,
-                                        gfx_wiiu_handle_events,
-                                        gfx_wiiu_start_frame,
-                                        gfx_wiiu_swap_buffers_begin,
-                                        gfx_wiiu_swap_buffers_end,
-                                        gfx_wiiu_get_time,
-                                        gfx_wiiu_set_target_fps,
-                                        gfx_wiiu_set_maximum_frame_latency,
-                                        gfx_wiiu_get_key_name,
-                                        gfx_wiiu_can_disable_vsync,
-                                        gfx_wiiu_is_running,
-                                        gfx_wiiu_destroy,
-                                        gfx_wiiu_is_fullscreen };
+} // namespace Fast
 
 #endif
