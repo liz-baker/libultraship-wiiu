@@ -198,8 +198,10 @@ std::shared_ptr<Context> Context::CreateDefaultInstance(const std::string& name,
         rmArgs["validHashes"] = std::vector<uint32_t>(validHashes.begin(), validHashes.end());
         resourceManager->Init(rmArgs);
     } catch (const std::exception& e) {
+#ifndef __WIIU__
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "OTR file not found",
                                  "Main OTR file not found. Please generate one", nullptr);
+#endif
         SPDLOG_ERROR("Failed to initialize ResourceManager: {}", e.what());
 #ifdef __IOS__
         exit(0);
@@ -208,8 +210,10 @@ std::shared_ptr<Context> Context::CreateDefaultInstance(const std::string& name,
     }
 
     if (!resourceManager->GetArchiveManager()->IsInitialized()) {
+#ifndef __WIIU__
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "OTR file not found",
                                  "Main OTR file not found. Please generate one", nullptr);
+#endif
         SPDLOG_ERROR("Main OTR file not found!");
 #ifdef __IOS__
         exit(0);

@@ -51,16 +51,19 @@ void ConnectedPhysicalDeviceManager::HandlePhysicalDeviceDisconnect(int32_t) {
 }
 
 void ConnectedPhysicalDeviceManager::CloseConnectedSDLGamepads() {
+#ifndef __WIIU__
     if ((SDL_WasInit(SDL_INIT_GAMEPAD) & SDL_INIT_GAMEPAD) != 0) {
         for (const auto& [instanceId, gamepad] : mConnectedSDLGamepads) {
             SDL_CloseGamepad(gamepad);
         }
     }
+#endif
     mConnectedSDLGamepads.clear();
     mConnectedSDLGamepadNames.clear();
 }
 
 void ConnectedPhysicalDeviceManager::RefreshConnectedSDLGamepads() {
+#ifndef __WIIU__
     static SDL_GUID sZeroGuid;
 
     int32_t joystickCount = 0;
@@ -132,5 +135,6 @@ void ConnectedPhysicalDeviceManager::RefreshConnectedSDLGamepads() {
     }
 
     SDL_free(joysticks);
+#endif
 }
 } // namespace Ship

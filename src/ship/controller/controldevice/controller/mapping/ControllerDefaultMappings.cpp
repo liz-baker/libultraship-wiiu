@@ -112,6 +112,7 @@ void ControllerDefaultMappings::SetDefaultSDLAxisDirectionToAxisDirectionMapping
         return;
     }
 
+#ifndef __WIIU__
     mDefaultSDLAxisDirectionToAxisDirectionMappings[LEFT_STICK] = {
         { LEFT, { SDL_GAMEPAD_AXIS_LEFTX, -1 } },
         { RIGHT, { SDL_GAMEPAD_AXIS_LEFTX, 1 } },
@@ -125,6 +126,7 @@ void ControllerDefaultMappings::SetDefaultSDLAxisDirectionToAxisDirectionMapping
         { UP, { SDL_GAMEPAD_AXIS_RIGHTY, -1 } },
         { DOWN, { SDL_GAMEPAD_AXIS_RIGHTY, 1 } },
     };
+#endif
 }
 
 } // namespace Ship

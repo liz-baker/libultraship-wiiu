@@ -11,7 +11,9 @@
 #include <dlfcn.h>  // for dladdr
 #include <execinfo.h>
 #include <unistd.h>
+#ifndef __WIIU__
 #include <SDL3/SDL.h>
+#endif
 #endif
 
 #if _WIN32

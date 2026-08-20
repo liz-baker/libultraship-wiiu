@@ -21,6 +21,7 @@ std::shared_ptr<ControllerAxisDirectionMapping> AxisDirectionMappingFactory::Cre
     const std::string mappingClass = consoleVariable->GetString(
         StringHelper::Sprintf("%s.AxisDirectionMappingClass", mappingCvarKey.c_str()).c_str(), "");
 
+#ifndef __WIIU__
     if (mappingClass == "SDLAxisDirectionToAxisDirectionMapping") {
         int32_t direction =
             consoleVariable->GetInteger(StringHelper::Sprintf("%s.Direction", mappingCvarKey.c_str()).c_str(), -1);
@@ -58,6 +59,7 @@ std::shared_ptr<ControllerAxisDirectionMapping> AxisDirectionMappingFactory::Cre
                                                                  static_cast<Direction>(direction), sdlControllerButton,
                                                                  controlDeck, consoleVariable);
     }
+#endif
 
     if (mappingClass == "KeyboardKeyToAxisDirectionMapping") {
         int32_t direction =
@@ -136,6 +138,7 @@ AxisDirectionMappingFactory::CreateDefaultSDLAxisDirectionMappings(uint8_t portI
                                                                    std::shared_ptr<ControlDeck> controlDeck) {
     std::vector<std::shared_ptr<ControllerAxisDirectionMapping>> mappings;
 
+#ifndef __WIIU__
     auto defaultButtonsForStick =
         controlDeck->GetControllerDefaultMappings()->GetDefaultSDLButtonToAxisDirectionMappings()[stickIndex];
 
@@ -152,6 +155,7 @@ AxisDirectionMappingFactory::CreateDefaultSDLAxisDirectionMappings(uint8_t portI
         mappings.push_back(std::make_shared<SDLAxisDirectionToAxisDirectionMapping>(
             portIndex, stickIndex, direction, sdlGamepadAxis, sdlGamepadDirection, controlDeck, consoleVariable));
     }
+#endif
 
     return mappings;
 }
@@ -161,6 +165,7 @@ std::shared_ptr<ControllerAxisDirectionMapping> AxisDirectionMappingFactory::Cre
     std::shared_ptr<ControlDeck> controlDeck) {
     std::shared_ptr<ControllerAxisDirectionMapping> mapping = nullptr;
 
+#ifndef __WIIU__
     for (auto [instanceId, gamepad] :
          controlDeck->GetConnectedPhysicalDeviceManager()->GetConnectedSDLGamepadsForPort(portIndex)) {
         for (int32_t button = SDL_GAMEPAD_BUTTON_SOUTH; button < SDL_GAMEPAD_BUTTON_COUNT; button++) {
@@ -194,6 +199,7 @@ std::shared_ptr<ControllerAxisDirectionMapping> AxisDirectionMappingFactory::Cre
             break;
         }
     }
+#endif
 
     return mapping;
 }

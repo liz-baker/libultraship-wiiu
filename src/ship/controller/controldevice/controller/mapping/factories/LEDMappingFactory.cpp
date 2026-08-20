@@ -25,9 +25,11 @@ LEDMappingFactory::CreateLEDMappingFromConfig(uint8_t portIndex, std::string id,
         return nullptr;
     }
 
+#ifndef __WIIU__
     if (mappingClass == "SDLLEDMapping") {
         return std::make_shared<SDLLEDMapping>(portIndex, colorSource, savedColor, controlDeck, consoleVariable);
     }
+#endif
 
     return nullptr;
 }
@@ -37,6 +39,7 @@ LEDMappingFactory::CreateLEDMappingFromSDLInput(uint8_t portIndex, std::shared_p
                                                 std::shared_ptr<ControlDeck> controlDeck) {
     std::shared_ptr<ControllerLEDMapping> mapping = nullptr;
 
+#ifndef __WIIU__
     for (auto [instanceId, gamepad] :
          controlDeck->GetConnectedPhysicalDeviceManager()->GetConnectedSDLGamepadsForPort(portIndex)) {
         if (!SDL_GetBooleanProperty(SDL_GetGamepadProperties(gamepad), SDL_PROP_GAMEPAD_CAP_RGB_LED_BOOLEAN, false)) {
@@ -74,6 +77,7 @@ LEDMappingFactory::CreateLEDMappingFromSDLInput(uint8_t portIndex, std::shared_p
             break;
         }
     }
+#endif
 
     return mapping;
 }

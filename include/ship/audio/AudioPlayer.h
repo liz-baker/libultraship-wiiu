@@ -162,5 +162,7 @@ class AudioPlayer {
 #include "CoreAudioAudioPlayer.h"
 #endif
 
+#ifndef __WIIU__
 #include "SDLAudioPlayer.h"
+#endif
 #include "NullAudioPlayer.h"

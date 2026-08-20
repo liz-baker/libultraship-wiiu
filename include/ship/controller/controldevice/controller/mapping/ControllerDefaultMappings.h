@@ -4,7 +4,12 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#ifndef __WIIU__
 #include <SDL3/SDL.h>
+#else
+typedef int SDL_GamepadButton;
+typedef int SDL_GamepadAxis;
+#endif
 #include "ControllerAxisDirectionMapping.h"
 
 #ifndef CONTROLLERBUTTONS_T

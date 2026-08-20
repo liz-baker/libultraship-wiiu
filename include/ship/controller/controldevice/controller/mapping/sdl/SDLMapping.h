@@ -1,6 +1,11 @@
 #pragma once
 
+#ifndef __WIIU__
 #include <SDL3/SDL.h>
+#else
+typedef int SDL_GamepadButton;
+typedef int SDL_GamepadAxis;
+#endif
 
 namespace Ship {
 

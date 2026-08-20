@@ -7,12 +7,14 @@
 #include "ship/window/FileDrop.h"
 #include "ship/resource/ResourceManager.h"
 #include "fast/interpreter.h"
+#ifndef __WIIU__
 #include "fast/backends/gfx_sdl.h"
 #include "fast/backends/gfx_dxgi.h"
 #include "fast/backends/gfx_opengl.h"
 #include "fast/backends/gfx_metal.h"
 #include "fast/backends/gfx_direct3d_common.h"
 #include "fast/backends/gfx_direct3d11.h"
+#endif
 #include "fast/backends/gfx_window_manager_api.h"
 
 #include "fast/Fast3dGui.h"
