@@ -1,6 +1,5 @@
-# Wii U on-hardware test harness (see GitHub issue #5). Builds a loadable
-# .wuhb that exercises libultraship's Wii U paths in stages, since Phases
-# A-D got the port compile-clean but nothing in it has ever actually run.
+# Wii U on-hardware test harness (see GitHub issue #5): a loadable .wuhb
+# that exercises libultraship's Wii U paths.
 #
 # Only built for CafeOS; gated by LUS_BUILD_WIIU_HARNESS so games consuming
 # this library don't pull in an unrelated executable target.
@@ -28,9 +27,9 @@ target_link_libraries(lus-harness PRIVATE
 # automatically by the toolchain's wut.specs file.
 
 # --whole-archive forces the linker to pull in and resolve every object file
-# in libultraship.a, not just the ones lus-harness itself references. That's
-# the point of Stage 0: a static archive alone doesn't prove its Wii U code
-# paths link cleanly, only that they compiled.
+# in libultraship.a, not just the ones lus-harness itself references — a
+# static archive alone doesn't prove its Wii U code paths link cleanly,
+# only that they compiled.
 
 target_include_directories(lus-harness PRIVATE
     ${CMAKE_SOURCE_DIR}/include
