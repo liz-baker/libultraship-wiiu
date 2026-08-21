@@ -1328,8 +1328,7 @@ void InputEditorWindow::DrawSetDefaultsButton(uint8_t portIndex) {
         ImGui::PopStyleColor();
         ImGui::PopStyleColor();
         if (ImGui::BeginPopupModal("Set Defaults for Gamepad", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("This will clear all existing mappings for\nGamepad on port %d.\n\nContinue?",
-                        portIndex + 1);
+            ImGui::Text("This will clear all existing mappings for\nGamepad on port %d.\n\nContinue?", portIndex + 1);
             if (ImGui::Button("Cancel")) {
                 shouldClose = true;
                 ImGui::CloseCurrentPopup();
