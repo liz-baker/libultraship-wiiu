@@ -21,8 +21,11 @@ target_link_libraries(lus-harness PRIVATE
     -Wl,--whole-archive
     libultraship
     -Wl,--no-whole-archive
-    whb
 )
+
+# No explicit -lwhb: current wut builds libwhb's sources directly into
+# libwut.a rather than packaging it as its own archive, and -lwut is added
+# automatically by the toolchain's wut.specs file.
 
 # --whole-archive forces the linker to pull in and resolve every object file
 # in libultraship.a, not just the ones lus-harness itself references. That's
