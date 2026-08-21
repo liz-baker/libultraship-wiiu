@@ -152,13 +152,16 @@ is downmixed to the front pair rather than driving AX's surround path.
      not just what Stage 0 itself calls — the first thing in this repo to
      actually *link* an executable against `libultraship.a`, closing a gap
      the static-lib-only CI build couldn't catch: an undefined Wii U symbol.
-   - **Stage 1 — normalized input readout** (open, highest remaining value):
-     live-print, per connected device, `GetDeviceName()`, the decoded
-     `GetButtonsHeld()` mask (names, not hex), and all four `GetAxisValue()`
-     axes from `include/ship/port/wiiu/WiiUInput.h`, cycling GamePad, Wii
-     Remote, Nunchuk, Classic, and Pro Controller. Directly validates the
-     button tables in `src/ship/port/wiiu/WiiUInput.cpp`, which compiled but
-     were never checked against real hardware.
+   - **Stage 1 — normalized input readout** (harness code landed,
+     [PR #9](https://github.com/liz-baker/libultraship-wiiu/pull/9); not yet
+     run on real hardware): live-prints, per connected device,
+     `GetDeviceName()`, the decoded `GetButtonsHeld()` mask (names, not hex),
+     and all four `GetAxisValue()` axes from
+     `include/ship/port/wiiu/WiiUInput.h`, cycling GamePad, Wii Remote,
+     Nunchuk, Classic, and Pro Controller. Lives alongside Stage 0 in the same
+     binary — the GamePad's `+` button toggles between the two modes. Directly
+     validates the button tables in `src/ship/port/wiiu/WiiUInput.cpp`, which
+     compiled but were never checked against real hardware.
    - **Stage 2 — AX audio** (open): instantiate `WiiUAudioPlayer` directly —
      it only takes an `AudioSettings` struct at construction, no `Context`
      dependency — feed it a generated 440 Hz sine, and watch `Buffered()`
