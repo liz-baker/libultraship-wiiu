@@ -26,7 +26,7 @@ namespace {
 void* sScreenBufferTV = nullptr;
 void* sScreenBufferDRC = nullptr;
 
-void PrintLine(int screen, int row, const std::string& text) {
+void PrintLine(OSScreenID screen, int row, const std::string& text) {
     OSScreenPutFontEx(screen, 0, row, text.c_str());
 }
 
