@@ -130,3 +130,8 @@ if(LUS_BUILD_TESTS)
     enable_testing()
     add_subdirectory("tests")
 endif()
+
+# =========== Wii U on-hardware test harness =============
+if(CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    add_subdirectory("tools/wiiu-harness")
+endif()

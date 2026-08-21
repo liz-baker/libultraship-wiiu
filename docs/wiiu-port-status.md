@@ -132,9 +132,55 @@ is downmixed to the front pair rather than driving AX's surround path.
 ## Remaining work
 
 1. Runtime validation on real hardware — the port is compile-clean, but neither
-   the GX2 renderer nor the native input and audio paths have been exercised on a
-   console. This is the focus of the next session: build a minimal test app
-   against this fork and run it on real (or emulated) Wii U hardware.
+   the GX2 renderer nor the native input and audio paths have been exercised on
+   a console. Tracked in [issue #5](https://github.com/liz-baker/libultraship-wiiu/issues/5)
+   via `tools/wiiu-harness/`, a staged, loadable `.wuhb` test app (Aroma-loadable,
+   `wiiload`-friendly for iteration) built only for `CafeOS`, gated behind
+   `LUS_BUILD_WIIU_HARNESS` (default `ON`). Stages are ordered so each one
+   isolates a failure before the next adds complexity — see the issue for the
+   full rationale. `build-wiiu` publishes the `.wuhb` and the static lib as a
+   GitHub Release on every push to `main` (prerelease, tagged
+   `wiiu-main-<sha>`) and as a real release on `v*` tags, so hardware testing
+   doesn't require a local devkitPro install.
+
+   - **Stage 0 — boot & link** (done, [PR #7](https://github.com/liz-baker/libultraship-wiiu/pull/7)):
+     OSScreen console (chosen over GX2 for the early stages specifically
+     because it has no dependency on the renderer under test), prints
+     compiler/build info and MEM2 heap free bytes, writes
+     `sd:/wiiu/apps/lus-harness/results.txt`. Links `libultraship` with
+     `-Wl,--whole-archive` so the whole static archive gets symbol-resolved,
+     not just what Stage 0 itself calls — the first thing in this repo to
+     actually *link* an executable against `libultraship.a`, closing a gap
+     the static-lib-only CI build couldn't catch: an undefined Wii U symbol.
+   - **Stage 1 — normalized input readout** (open, highest remaining value):
+     live-print, per connected device, `GetDeviceName()`, the decoded
+     `GetButtonsHeld()` mask (names, not hex), and all four `GetAxisValue()`
+     axes from `include/ship/port/wiiu/WiiUInput.h`, cycling GamePad, Wii
+     Remote, Nunchuk, Classic, and Pro Controller. Directly validates the
+     button tables in `src/ship/port/wiiu/WiiUInput.cpp`, which compiled but
+     were never checked against real hardware.
+   - **Stage 2 — AX audio** (open): instantiate `WiiUAudioPlayer` directly —
+     it only takes an `AudioSettings` struct at construction, no `Context`
+     dependency — feed it a generated 440 Hz sine, and watch `Buffered()`
+     settle near `DesiredBuffered` instead of drifting to 0 (underrun) or the
+     ring size (overrun); run it a few minutes to exercise ring-buffer wrap.
+   - **Stage 3 — GX2 renderer** (open): tear down OSScreen (it and GX2 can't
+     both own the display — switch output to `WHBLogUdp` port 4405 and/or the
+     results file), bring up `GfxWindowBackendWiiU(nullptr)` +
+     `GfxRenderingAPIGX2`, clear to a cycling color, swap, then a raw ImGui
+     demo window using ImGui's built-in font (confirmed font-loading-free —
+     `Fast3dGui`'s OTR-backed font path is a separate concern from ImGui's
+     own default bitmap font).
+   - **Stage 4 — full `Context` + mapping layer** (open): drive a
+     `ControlDeck` via `Context::CreateDefaultInstance(...)` to exercise
+     `mapping/wiiu/` end to end (built-in defaults, rumble). Confirmed during
+     Stage 0 investigation: `CreateDefaultInstance` cannot succeed with zero
+     archives — `ArchiveManager::Init` (`src/ship/resource/archive/ArchiveManager.cpp`)
+     only marks itself initialized once at least one archive loads, so this
+     stage needs either a minimal single-file `FolderArchive`-style directory,
+     or bypassing `CreateDefaultInstance` for the lower-level
+     `Context::CreateInstance(name, shortName, components)` overload,
+     hand-assembling only the components the mapping layer actually needs.
 2. Wii U input features not yet surfaced: the DRC's gyroscope (there is a
    `ControllerGyroMapping` interface waiting for it) and its touch screen.
 

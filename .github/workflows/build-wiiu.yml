@@ -1,10 +1,11 @@
 name: build-wiiu
-# Only run on PRs and pushes to main. Running on every branch push as well would
-# double-fire for PR branches and hammer the devkitPro package mirror (which
-# rate-limits DB syncs with HTTP 403).
+# Only run on PRs, pushes to main, and version tags. Running on every branch
+# push as well would double-fire for PR branches and hammer the devkitPro
+# package mirror (which rate-limits DB syncs with HTTP 403).
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,6 +17,10 @@ jobs:
     # WiiU CMake toolchain file used to cross-compile for the console.
     container:
       image: devkitpro/devkitppc:latest
+    # Needed to publish the release step below. No-op on pull_request builds,
+    # which don't reach that step.
+    permissions:
+      contents: write
     defaults:
       run:
         shell: bash
@@ -67,3 +72,43 @@ jobs:
           name: libultraship-wiiu
           path: build-wiiu/src/*.a
           if-no-files-found: error
+      - name: Upload harness .wuhb
+        uses: actions/upload-artifact@v4
+        with:
+          name: lus-harness-wuhb
+          path: build-wiiu/tools/wiiu-harness/lus-harness.wuhb
+          if-no-files-found: error
+
+      # Publish a GitHub Release with both artifacts attached, so testing on
+      # a real console is "download from a release, drop on SD" instead of
+      # digging through a logged-in Actions run whose artifacts expire.
+      # Skipped on PR builds — only pushes to main or a v* tag publish.
+      #
+      # - push to main: a new prerelease per commit (tag wiiu-main-<sha>),
+      #   giving every merge a stable, permanent download link.
+      # - push of a v* tag: a real, non-prerelease release at that tag.
+      - name: Determine release metadata
+        if: github.event_name == 'push'
+        id: release_meta
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "name=libultraship Wii U ${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            short_sha="$(git rev-parse --short HEAD)"
+            echo "tag=wiiu-main-${short_sha}" >> "$GITHUB_OUTPUT"
+            echo "name=Wii U build ${short_sha} (main)" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          name: ${{ steps.release_meta.outputs.name }}
+          prerelease: ${{ steps.release_meta.outputs.prerelease }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            build-wiiu/src/*.a
+            build-wiiu/tools/wiiu-harness/lus-harness.wuhb

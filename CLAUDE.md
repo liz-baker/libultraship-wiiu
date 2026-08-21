@@ -36,6 +36,40 @@ phases land.
   the (now-historical) revert checklist below). The `build-wiiu` compile step
   stays blocking and covers the GX2 configuration. Full PR CI — desktop
   matrix, `build-wiiu`, and `tidy-format-validation` — is active again.
+- [ ] **Phase E — Wii U on-hardware test harness.** [Issue #5](https://github.com/liz-baker/libultraship-wiiu/issues/5).
+  The port is compile-clean end to end but **nothing in it has ever executed**
+  on a console or emulator. `tools/wiiu-harness/` builds a loadable `.wuhb`
+  (target: Aroma, plus `wiiload` for iteration) in 5 stages, ordered so each
+  one isolates a failure before the next stage adds complexity. Full design,
+  API references, and packaging notes are in the issue; short version:
+  - [x] **Stage 0 — boot & link.** [PR #7](https://github.com/liz-baker/libultraship-wiiu/pull/7).
+    OSScreen console, toolchain/heap info, SD write test. Links `libultraship`
+    with `--whole-archive` so every Wii U object file's symbols get resolved —
+    the first time anything has *linked* against the Wii U code, not just
+    compiled it. Also wired `build-wiiu` to publish the `.wuhb` and the static
+    lib as GitHub Releases (prerelease per commit to `main`, real release on
+    `v*` tags) so hardware testing doesn't need a local devkitPro install.
+  - [ ] **Stage 1 — normalized input readout.** Highest-value remaining stage:
+    live-prints `GetDeviceName()`/`GetButtonsHeld()`/`GetAxisValue()` from
+    `WiiUInput.h` for GamePad, Wii Remote, Nunchuk, Classic, and Pro
+    Controller. Validates the button tables in `WiiUInput.cpp`, which have
+    compiled but were never semantically checked against real hardware.
+  - [ ] **Stage 2 — AX audio.** Instantiate `WiiUAudioPlayer` standalone (no
+    `Context` needed — just an `AudioSettings`), play a generated 440 Hz sine,
+    watch `Buffered()` for underrun/overrun/ring-wrap.
+  - [ ] **Stage 3 — GX2 renderer.** Tear down OSScreen (conflicts with GX2 —
+    switch logging to `WHBLogUdp`/results file), bring up
+    `GfxWindowBackendWiiU` + `GfxRenderingAPIGX2`, cycling clear color, then a
+    raw ImGui demo window using ImGui's built-in font (not `Fast3dGui`, which
+    needs an OTR-backed font resource).
+  - [ ] **Stage 4 — full `Context` + mapping layer.** Drive a `ControlDeck`
+    through `Context::CreateDefaultInstance(...)` to exercise
+    `mapping/wiiu/` end to end (built-in defaults, rumble). Open question,
+    confirmed during Stage 0 investigation: `CreateDefaultInstance` cannot
+    succeed with zero archives (`ArchiveManager::Init` requires at least one
+    loaded archive) — this stage needs either a minimal single-file
+    FolderArchive, or bypassing `CreateDefaultInstance` for the lower-level
+    `Context::CreateInstance(name, shortName, components)` overload.
 
 ## ⚠️ Temporary CI changes made during the Wii U port (now reverted)
 
