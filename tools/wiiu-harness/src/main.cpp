@@ -203,7 +203,7 @@ int main(int argc, char** argv) {
     while (WHBProcIsRunning()) {
         Ship::WiiU::Update();
 
-        const uint32_t gamePadHeld = Ship::WiiU::GetButtonsHeld(Ship::WiiU::WIIU_DEVICE_GAMEPAD);
+        const uint32_t gamePadHeld = Ship::WiiU::GetButtonsHeld(WIIU_DEVICE_GAMEPAD);
         const bool plusPressed =
             (gamePadHeld & Ship::WiiU::WIIU_BUTTON_PLUS) && !(prevGamePadHeld & Ship::WiiU::WIIU_BUTTON_PLUS);
         prevGamePadHeld = gamePadHeld;
