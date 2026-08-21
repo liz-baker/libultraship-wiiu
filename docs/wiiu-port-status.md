@@ -133,8 +133,17 @@ is downmixed to the front pair rather than driving AX's surround path.
 
 1. Runtime validation on real hardware — the port is compile-clean, but neither
    the GX2 renderer nor the native input and audio paths have been exercised on a
-   console. This is the focus of the next session: build a minimal test app
-   against this fork and run it on real (or emulated) Wii U hardware.
+   console. Tracked in [issue #5](https://github.com/liz-baker/libultraship-wiiu/issues/5):
+   `tools/wiiu-harness/` is a staged, loadable `.wuhb` test app (Aroma-loadable,
+   `wiiload`-friendly) built only for `CafeOS`. Stage 0 (boot, toolchain/heap
+   info, SD write via OSScreen) has landed and is the first thing in this repo
+   to actually *link* an executable against `libultraship.a`, closing a gap
+   the static-lib-only CI build couldn't catch: an undefined Wii U symbol.
+   Stages 1-4 (normalized input readout, AX audio, the GX2 renderer, and the
+   full `Context`/mapping layer) are still open. `build-wiiu` publishes the
+   `.wuhb` (and the static lib) as a GitHub Release on every push to `main`,
+   and as a real release on `v*` tags, so testing on hardware doesn't require
+   a local devkitPro install.
 2. Wii U input features not yet surfaced: the DRC's gyroscope (there is a
    `ControllerGyroMapping` interface waiting for it) and its touch screen.
 
