@@ -49,9 +49,10 @@ phases land.
     compiled it. Also wired `build-wiiu` to publish the `.wuhb` and the static
     lib as GitHub Releases (prerelease per commit to `main`, real release on
     `v*` tags) so hardware testing doesn't need a local devkitPro install.
-  - [ ] **Stage 1 — normalized input readout.** Highest-value remaining stage:
-    live-prints `GetDeviceName()`/`GetButtonsHeld()`/`GetAxisValue()` from
-    `WiiUInput.h` for GamePad, Wii Remote, Nunchuk, Classic, and Pro
+  - [ ] **Stage 1 — normalized input readout.** [PR #9](https://github.com/liz-baker/libultraship-wiiu/pull/9)
+    (harness code landed, not yet run on hardware). Highest-value remaining
+    stage: live-prints `GetDeviceName()`/`GetButtonsHeld()`/`GetAxisValue()`
+    from `WiiUInput.h` for GamePad, Wii Remote, Nunchuk, Classic, and Pro
     Controller. Validates the button tables in `WiiUInput.cpp`, which have
     compiled but were never semantically checked against real hardware.
   - [ ] **Stage 2 — AX audio.** Instantiate `WiiUAudioPlayer` standalone (no
