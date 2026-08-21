@@ -96,7 +96,7 @@ jobs:
             echo "name=libultraship Wii U ${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
-            short_sha="$(git rev-parse --short HEAD)"
+            short_sha="${GITHUB_SHA:0:7}"
             echo "tag=wiiu-main-${short_sha}" >> "$GITHUB_OUTPUT"
             echo "name=Wii U build ${short_sha} (main)" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
