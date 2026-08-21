@@ -19,6 +19,10 @@ void ThrowInvalidOTR();
 // Polls the native VPAD/KPAD devices. Call once per frame before querying state.
 void Update();
 
+// Re-arms any motor a mapping has left running. Called by Update(); defined in
+// WiiUInput.cpp alongside the rest of the normalized input layer.
+void UpdateRumble();
+
 // Returns the latest gamepad (DRC) state, or nullptr if it is unavailable.
 VPADStatus* GetVPADStatus(VPADReadError* error);
 

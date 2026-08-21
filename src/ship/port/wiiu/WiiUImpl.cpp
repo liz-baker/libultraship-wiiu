@@ -102,6 +102,8 @@ void Update() {
         kpadError[chan] = kerr;
         hasKpad[chan] = (kread > 0 && kerr == KPAD_ERROR_OK);
     }
+
+    UpdateRumble();
 }
 
 VPADStatus* GetVPADStatus(VPADReadError* error) {

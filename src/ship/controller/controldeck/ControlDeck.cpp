@@ -49,7 +49,7 @@ void ControlDeck::Init(uint8_t* controllerBits) {
     if (!mPorts[0]->GetConnectedController()->HasConfig()) {
         mPorts[0]->GetConnectedController()->AddDefaultMappings(PhysicalDeviceType::Keyboard);
         mPorts[0]->GetConnectedController()->AddDefaultMappings(PhysicalDeviceType::Mouse);
-        mPorts[0]->GetConnectedController()->AddDefaultMappings(PhysicalDeviceType::SDLGamepad);
+        mPorts[0]->GetConnectedController()->AddDefaultMappings(PHYSICAL_DEVICE_TYPE_GAMEPAD);
     }
 
     MarkInitialized();

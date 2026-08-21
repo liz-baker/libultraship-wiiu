@@ -18,6 +18,10 @@ typedef int SDL_GamepadAxis;
 
 #include "ship/controller/controldevice/controller/mapping/keyboard/KeyboardScancodes.h"
 
+#ifdef __WIIU__
+#include "ship/port/wiiu/WiiUInput.h"
+#endif
+
 namespace Ship {
 
 /**
@@ -95,6 +99,25 @@ class ControllerDefaultMappings {
     std::unordered_map<StickIndex, std::vector<std::pair<Direction, std::pair<SDL_GamepadAxis, int32_t>>>>
     GetDefaultSDLAxisDirectionToAxisDirectionMappings();
 
+#ifdef __WIIU__
+    /**
+     * @brief Returns the default normalized Wii U buttons for each N64 button.
+     *
+     * Keyed by N64 button bitmask; the values are WiiUButton bits. A bitmask may map
+     * to several buttons so that one table covers the GamePad, the Pro and Classic
+     * Controllers, and a bare Wii Remote at once.
+     */
+    std::unordered_map<CONTROLLERBUTTONS_T, std::unordered_set<uint32_t>> GetDefaultWiiUButtonToButtonMappings();
+
+    /** @brief Returns the default Wii U (axis, direction) pairs for each N64 button. */
+    std::unordered_map<CONTROLLERBUTTONS_T, std::vector<std::pair<int32_t, int32_t>>>
+    GetDefaultWiiUAxisDirectionToButtonMappings();
+
+    /** @brief Returns the default Wii U (axis, direction) pairs for each N64 stick direction. */
+    std::unordered_map<StickIndex, std::vector<std::pair<Direction, std::pair<int32_t, int32_t>>>>
+    GetDefaultWiiUAxisDirectionToAxisDirectionMappings();
+#endif
+
   protected:
     /**
      * @brief Replaces the default keyboard-key-to-button mappings.
@@ -143,6 +166,26 @@ class ControllerDefaultMappings {
         std::unordered_map<StickIndex, std::vector<std::pair<Direction, std::pair<SDL_GamepadAxis, int32_t>>>>
             defaultSDLAxisDirectionToAxisDirectionMappings);
 
+#ifdef __WIIU__
+    /**
+     * @brief Installs the Wii U button defaults, falling back to the built-in table.
+     *
+     * Unlike the SDL tables, which libultraship leaves to the consuming game, the Wii U
+     * tables ship with a usable default: SDL is unavailable on the console, so nothing
+     * else would provide one.
+     */
+    virtual void SetDefaultWiiUButtonToButtonMappings(
+        std::unordered_map<CONTROLLERBUTTONS_T, std::unordered_set<uint32_t>> defaultWiiUButtonToButtonMappings);
+
+    virtual void SetDefaultWiiUAxisDirectionToButtonMappings(
+        std::unordered_map<CONTROLLERBUTTONS_T, std::vector<std::pair<int32_t, int32_t>>>
+            defaultWiiUAxisDirectionToButtonMappings);
+
+    virtual void SetDefaultWiiUAxisDirectionToAxisDirectionMappings(
+        std::unordered_map<StickIndex, std::vector<std::pair<Direction, std::pair<int32_t, int32_t>>>>
+            defaultWiiUAxisDirectionToAxisDirectionMappings);
+#endif
+
   private:
     std::unordered_map<CONTROLLERBUTTONS_T, std::unordered_set<KbScancode>> mDefaultKeyboardKeyToButtonMappings;
     std::unordered_map<StickIndex, std::vector<std::pair<Direction, KbScancode>>>
@@ -154,5 +197,13 @@ class ControllerDefaultMappings {
         mDefaultSDLAxisDirectionToButtonMappings;
     std::unordered_map<StickIndex, std::vector<std::pair<Direction, std::pair<SDL_GamepadAxis, int32_t>>>>
         mDefaultSDLAxisDirectionToAxisDirectionMappings;
+
+#ifdef __WIIU__
+    std::unordered_map<CONTROLLERBUTTONS_T, std::unordered_set<uint32_t>> mDefaultWiiUButtonToButtonMappings;
+    std::unordered_map<CONTROLLERBUTTONS_T, std::vector<std::pair<int32_t, int32_t>>>
+        mDefaultWiiUAxisDirectionToButtonMappings;
+    std::unordered_map<StickIndex, std::vector<std::pair<Direction, std::pair<int32_t, int32_t>>>>
+        mDefaultWiiUAxisDirectionToAxisDirectionMappings;
+#endif
 };
 } // namespace Ship

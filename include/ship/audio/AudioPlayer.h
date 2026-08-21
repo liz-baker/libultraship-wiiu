@@ -164,5 +164,7 @@ class AudioPlayer {
 
 #ifndef __WIIU__
 #include "SDLAudioPlayer.h"
+#else
+#include "WiiUAudioPlayer.h"
 #endif
 #include "NullAudioPlayer.h"
