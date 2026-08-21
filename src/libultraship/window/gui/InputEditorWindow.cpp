@@ -1322,14 +1322,13 @@ void InputEditorWindow::DrawSetDefaultsButton(uint8_t portIndex) {
         GetButtonColorsForPhysicalDeviceType(PHYSICAL_DEVICE_TYPE_GAMEPAD, buttonColor, buttonHoveredColor);
         ImGui::PushStyleColor(ImGuiCol_Button, buttonColor);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, buttonHoveredColor);
-        if (ImGui::Button(StringHelper::Sprintf("%s %s", ICON_FA_GAMEPAD, "Gamepad (SDL)").c_str())) {
-            ImGui::OpenPopup("Set Defaults for Gamepad (SDL)");
+        if (ImGui::Button(StringHelper::Sprintf("%s %s", ICON_FA_GAMEPAD, "Gamepad").c_str())) {
+            ImGui::OpenPopup("Set Defaults for Gamepad");
         }
         ImGui::PopStyleColor();
         ImGui::PopStyleColor();
-        if (ImGui::BeginPopupModal("Set Defaults for Gamepad (SDL)", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("This will clear all existing mappings for\nGamepad (SDL) on port %d.\n\nContinue?",
-                        portIndex + 1);
+        if (ImGui::BeginPopupModal("Set Defaults for Gamepad", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("This will clear all existing mappings for\nGamepad on port %d.\n\nContinue?", portIndex + 1);
             if (ImGui::Button("Cancel")) {
                 shouldClose = true;
                 ImGui::CloseCurrentPopup();
