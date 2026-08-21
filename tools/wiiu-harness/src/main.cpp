@@ -1,11 +1,3 @@
-// Stage 0 of the Wii U on-hardware test harness (see GitHub issue #5):
-// boot to an OSScreen console, print toolchain/heap info, and confirm SD
-// write access. This is deliberately the *only* stage that doesn't touch
-// libultraship's own Wii U code paths — its job is to prove the toolchain,
-// .wuhb packaging, and Aroma loading work, and that linking against
-// libultraship.a (pulled in --whole-archive by CMakeLists.txt) actually
-// resolves every symbol.
-
 #include <cstdio>
 #include <cstring>
 #include <string>
