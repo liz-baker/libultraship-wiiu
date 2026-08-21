@@ -31,24 +31,24 @@ phases land.
   (`ship/port/wiiu/WiiUInput.h`), with built-in Wii U defaults; audio plays
   through a native AX player (`AudioBackend::AX`). Not yet covered: DRC gyro and
   the touch screen, and the port has still not been run on hardware.
-- [ ] **Phase D — Finalize CI.** Re-enable the desktop `build-validation` /
-  `test-validation` PR triggers (see the revert checklist below). The
-  `build-wiiu` compile step is already blocking and already covers the GX2
-  configuration.
+- [x] **Phase D — Finalize CI.** Done: the desktop `build-validation` /
+  `test-validation` workflows are back to running on every push and PR (see
+  the (now-historical) revert checklist below). The `build-wiiu` compile step
+  stays blocking and covers the GX2 configuration. Full PR CI — desktop
+  matrix, `build-wiiu`, and `tidy-format-validation` — is active again.
 
-## ⚠️ Temporary CI changes to revert before finishing the Wii U port
+## ⚠️ Temporary CI changes made during the Wii U port (now reverted)
 
-While the Wii U port is in progress, PR CI is intentionally kept focused on the
-`build-wiiu` job so the desktop matrix doesn't run on every push to the port
-branch. **These changes are temporary and must be reverted** once the port is
-ready (or whenever full PR validation is wanted again):
+While the Wii U port was in progress, PR CI was intentionally kept focused on
+the `build-wiiu` job so the desktop matrix didn't run on every push to the
+port branch. All of these have been reverted now that the port is compile-clean
+end to end:
 
-1. **`.github/workflows/build-validation.yml`** — trigger changed to
-   `push: branches: [main]` only; the `pull_request:` trigger is commented out.
-   *Restore:* re-enable `pull_request:` and drop the `branches` filter so it
-   runs on all pushes and PRs again.
-2. **`.github/workflows/test-validation.yml`** — same change as above.
-   *Restore:* same as above.
+1. ~~**`.github/workflows/build-validation.yml`** — trigger changed to
+   `push: branches: [main]` only; the `pull_request:` trigger was commented
+   out.~~ Reverted (Phase D): back to `push:` / `pull_request:` on every branch.
+2. ~~**`.github/workflows/test-validation.yml`** — same change as above.~~
+   Reverted (Phase D): same as above.
 3. ~~**`.github/workflows/build-wiiu.yml`** — the build step was
    `continue-on-error`.~~ Done (Phase A): the Wii U library compiles and links
    end to end, so the `Build` step is now blocking.
@@ -63,8 +63,8 @@ ready (or whenever full PR validation is wanted again):
    fine to keep, but revisit if the wiiu port sources should be tidied via a
    cross-toolchain setup.
 
-Still active on PRs during the port: `build-wiiu` (blocking) and
-`tidy-format-validation` (clang-format + clang-tidy). Docs
+Active on PRs: `build-validation`, `test-validation`, `build-wiiu` (all
+blocking) and `tidy-format-validation` (clang-format + clang-tidy). Docs
 workflows are path-filtered and only run when `docs/**` changes.
 
 ## Wii U build

@@ -55,11 +55,14 @@ unavailable on `CafeOS`:
 
 ## Status
 
-**Phases A, B and C are complete.** The core `libultraship.a` compiles and links
-end to end for `CafeOS`, including the GX2 renderer and Wii U window backend.
-SDL3 is fully guarded out of the always-compiled layers, controllers and audio
-are driven natively, and the single blocking `build-wiiu` CI job covers the whole
-console build.
+**Phases A, B, C and D are complete.** The core `libultraship.a` compiles and
+links end to end for `CafeOS`, including the GX2 renderer and Wii U window
+backend. SDL3 is fully guarded out of the always-compiled layers, controllers
+and audio are driven natively, and the blocking `build-wiiu` CI job covers the
+whole console build. The desktop `build-validation` / `test-validation`
+workflows are back to running on every push and PR, so the fork now gets full
+CI coverage — desktop matrix, Wii U cross-compile, and clang-format/tidy — on
+every change, not just the port-specific check.
 
 ### What Phase B changed
 
@@ -128,15 +131,12 @@ is downmixed to the front pair rather than driving AX's surround path.
 
 ## Remaining work
 
-1. **Phase D — finalize CI.** Re-enable the desktop `build-validation` /
-   `test-validation` PR triggers (see the revert checklist in `CLAUDE.md`).
-2. Runtime validation on real hardware — the port is compile-clean, but neither
+1. Runtime validation on real hardware — the port is compile-clean, but neither
    the GX2 renderer nor the native input and audio paths have been exercised on a
-   console.
-3. Wii U input features not yet surfaced: the DRC's gyroscope (there is a
+   console. This is the focus of the next session: build a minimal test app
+   against this fork and run it on real (or emulated) Wii U hardware.
+2. Wii U input features not yet surfaced: the DRC's gyroscope (there is a
    `ControllerGyroMapping` interface waiting for it) and its touch screen.
-4. The input editor still labels the gamepad section "Gamepad (SDL)" on every
-   platform, which reads wrong on the console.
 
 Progress is driven through CI on real devkitPPC output: the devkitPPC toolchain
 image cannot be pulled from the Claude Code sandbox (its Docker Hub blob CDN is

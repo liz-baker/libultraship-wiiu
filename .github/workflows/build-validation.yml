@@ -1,11 +1,7 @@
 name: build-validation
-# TEMPORARY (Wii U port): only run on pushes to main so PR CI stays focused on
-# the build-wiiu job. Restore the `pull_request:` trigger (and drop the
-# `branches` filter under push) once the Wii U port is finished. See CLAUDE.md.
 on:
   push:
-    branches: [main]
-  # pull_request:
+  pull_request:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
