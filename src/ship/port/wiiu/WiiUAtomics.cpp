@@ -6,9 +6,11 @@
 // a single cross-core OSSpinLock critical section (the Espresso is a real
 // 3-core chip, so an unsynchronized increment would be a genuine race).
 //
-// Only __atomic_fetch_add_8 is implemented because it's the only one any
-// current Wii U code path reaches (Ship::Part's sNextPartId). Add siblings
-// here the same way if a build reports another one missing.
+// __atomic_fetch_add_8 and __atomic_load_8 are implemented because they're
+// the only ones any current Wii U code path reaches (Ship::Part's
+// sNextPartId, and the harness Stage 0 atomics stress test reading the
+// counter back). Add siblings here the same way if a build reports another
+// one missing.
 
 #include <coreinit/spinlock.h>
 
@@ -25,6 +27,14 @@ extern "C" uint64_t __atomic_fetch_add_8(volatile void* mem, uint64_t val, int /
     *ptr = old + val;
     OSUninterruptibleSpinLock_Release(&sAtomic8Lock);
     return old;
+}
+
+extern "C" uint64_t __atomic_load_8(const volatile void* mem, int /*memorder*/) {
+    OSUninterruptibleSpinLock_Acquire(&sAtomic8Lock);
+    const volatile uint64_t* ptr = static_cast<const volatile uint64_t*>(mem);
+    uint64_t value = *ptr;
+    OSUninterruptibleSpinLock_Release(&sAtomic8Lock);
+    return value;
 }
 
 #endif
