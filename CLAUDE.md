@@ -78,10 +78,9 @@ phases land.
     no display list to drive it from, so shader IDs for two minimal configs
     (untextured per-vertex-color, and textured with no vertex color) are
     hand-encoded the way `gfx_cc_get_features()` would decode them from a
-    real one. Brings up `GfxWindowBackendWiiU` + `GfxRenderingAPIGX2`, cycles
-    the clear color (previously hardcoded black in `ClearFramebuffer` — added
-    `GfxRenderingAPIGX2::SetClearColor()` for it), CPU-transforms a rotating
-    cube's vertices into clip space each frame (GX2's vertex shader does no
+    real one. Brings up `GfxWindowBackendWiiU` + `GfxRenderingAPIGX2` and
+    CPU-transforms a rotating cube's vertices into clip space each frame
+    (GX2's vertex shader does no
     MVP multiply of its own — confirmed while building this, not assumed) and
     submits it via `DrawTriangles`, and separately exercises
     `NewTexture`/`UploadTexture`/`SetSamplerParameters` with a hand-made

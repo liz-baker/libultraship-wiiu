@@ -665,18 +665,11 @@ void GfxRenderingAPIGX2::StartDrawToFramebuffer(int fb, float noise_scale) {
     mCurrentFramebuffer = fb;
 }
 
-void GfxRenderingAPIGX2::SetClearColor(float r, float g, float b, float a) {
-    mClearColorR = r;
-    mClearColorG = g;
-    mClearColorB = b;
-    mClearColorA = a;
-}
-
 void GfxRenderingAPIGX2::ClearFramebuffer(bool color, bool depth) {
     Framebuffer& buffer = mFramebuffers[mCurrentFramebuffer];
 
     if (color) {
-        GX2ClearColor(&buffer.color_buffer, mClearColorR, mClearColorG, mClearColorB, mClearColorA);
+        GX2ClearColor(&buffer.color_buffer, 0.0f, 0.0f, 0.0f, 1.0f);
     }
 
     if (depth) {

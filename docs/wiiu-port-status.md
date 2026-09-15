@@ -197,9 +197,7 @@ is downmixed to the front pair rather than driving AX's surround path.
      shader IDs for two minimal configs — untextured per-vertex-color, and
      textured with no vertex color — are hand-encoded the way
      `gfx_cc_get_features()` would decode them from a real one. Brings up
-     `GfxWindowBackendWiiU(nullptr)` + `GfxRenderingAPIGX2`, cycles the clear
-     color (previously hardcoded black in `ClearFramebuffer`; added
-     `GfxRenderingAPIGX2::SetClearColor()` for this), CPU-transforms a
+     `GfxWindowBackendWiiU(nullptr)` + `GfxRenderingAPIGX2`, CPU-transforms a
      rotating cube's vertices into clip space every frame and submits them via
      `DrawTriangles`, and separately drives
      `NewTexture`/`UploadTexture`/`SetSamplerParameters` with a hand-made

@@ -62,13 +62,6 @@ class GfxRenderingAPIGX2 final : public GfxRenderingAPI {
     void SetViewport(int x, int y, int width, int height) override;
     void SetScissor(int x, int y, int width, int height) override;
     void SetUseAlpha(bool useAlpha) override;
-    /**
-     * @brief Sets the color used by ClearFramebuffer(color=true). GX2-specific (not part of
-     * GfxRenderingAPI): a real N64 decomp always clears to whatever color the game picks per frame
-     * via the RDP, so this exists for callers that drive GfxRenderingAPIGX2 directly instead of
-     * through the Fast3D interpreter (e.g. the Wii U hardware test harness).
-     */
-    void SetClearColor(float r, float g, float b, float a);
     void DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) override;
     void Init() override;
     void OnResize() override;
@@ -160,11 +153,6 @@ class GfxRenderingAPIGX2 final : public GfxRenderingAPI {
     bool mZmodeDecal = false;
     float mSSDB = -2.0f;
     bool mUseAlpha = false;
-
-    float mClearColorR = 0.0f;
-    float mClearColorG = 0.0f;
-    float mClearColorB = 0.0f;
-    float mClearColorA = 1.0f;
 };
 
 } // namespace Fast

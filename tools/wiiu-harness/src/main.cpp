@@ -617,12 +617,6 @@ void PumpAndRenderGx2Test(Gx2TestState& state, const std::string& resultsPath, i
     state.frameCount++;
     state.cubeAngle += 0.02f;
 
-    // Cycling clear color: exercises GfxRenderingAPIGX2::ClearFramebuffer() with real varying
-    // input every frame, rather than the single hardcoded black it had before this stage.
-    const float t = static_cast<float>(state.frameCount) * 0.01f;
-    state.api->SetClearColor(0.5f + 0.5f * std::sin(t), 0.5f + 0.5f * std::sin(t + 2.094f),
-                             0.5f + 0.5f * std::sin(t + 4.188f), 1.0f);
-
     state.api->StartFrame();
     state.api->StartDrawToFramebuffer(/*fbId=*/0, /*noiseScale=*/1.0f);
     state.api->ClearFramebuffer(/*color=*/true, /*depth=*/true);
