@@ -70,11 +70,36 @@ phases land.
     introduces its own click. `Buffered()` is tracked for underrun count,
     min/max, and a near-ring-capacity flag, surfaced live on screen and in
     `results.txt` rather than relying on listening alone.
-  - [ ] **Stage 3 — GX2 renderer.** Tear down OSScreen (conflicts with GX2 —
-    switch logging to `WHBLogUdp`/results file), bring up
-    `GfxWindowBackendWiiU` + `GfxRenderingAPIGX2`, cycling clear color, then a
-    raw ImGui demo window using ImGui's built-in font (not `Fast3dGui`, which
-    needs an OTR-backed font resource).
+  - [ ] **Stage 3 — GX2 renderer** (harness code landed, not yet run on
+    hardware). Drives `GfxRenderingAPIGX2` directly rather than raw GX2 calls,
+    on purpose: raw GX2 would only prove the console can draw a triangle, not
+    that libultraship's own rendering path works, and that's the layer a real
+    N64 decomp actually calls (through the F3D microcode interpreter). There's
+    no display list to drive it from, so shader IDs for two minimal configs
+    (untextured per-vertex-color, and textured with no vertex color) are
+    hand-encoded the way `gfx_cc_get_features()` would decode them from a
+    real one. Brings up `GfxWindowBackendWiiU` + `GfxRenderingAPIGX2` and
+    CPU-transforms a rotating cube's vertices into clip space each frame
+    (GX2's vertex shader does no
+    MVP multiply of its own — confirmed while building this, not assumed) and
+    submits it via `DrawTriangles`, and separately exercises
+    `NewTexture`/`UploadTexture`/`SetSamplerParameters` with a hand-made
+    checkerboard on a static quad. Tears down OSScreen (conflicts with GX2 —
+    logging moves to `WHBLogUdp`/results file) and layers a raw ImGui demo
+    window on top using ImGui's built-in font (not `Fast3dGui`, which needs an
+    OTR-backed font resource). Entering this stage is a one-way trip for the
+    run — `B` exits the harness rather than returning to the OSScreen menu.
+    Building this surfaced [issue #16](https://github.com/liz-baker/libultraship-wiiu/issues/16):
+    `GfxWindowBackendWiiU::Init()`/`HandleEvents()` are the first Wii U code
+    path to statically reference `Fast3dGui`'s Component-tree methods, which
+    is the first time `Ship::Part`'s construction becomes reachable under
+    `--gc-sections` — exposing that devkitPPC ships no `libatomic` for the
+    64-bit atomic `Part`'s id counter needs. Not a Stage 3-specific bug —
+    Stage 4 would have hit the identical wall constructing a full `Context`.
+    Fixed in `src/ship/port/wiiu/WiiUAtomics.cpp` (an `OSSpinLock`-guarded
+    `__atomic_fetch_add_8`/`__atomic_load_8` shim, verified under genuine
+    cross-core contention by a 3-thread, one-per-Espresso-core stress test
+    added to Stage 0).
   - [ ] **Stage 4 — full `Context` + mapping layer.** Drive a `ControlDeck`
     through `Context::CreateDefaultInstance(...)` to exercise
     `mapping/wiiu/` end to end (built-in defaults, rumble). Open question,
@@ -83,6 +108,13 @@ phases land.
     loaded archive) — this stage needs either a minimal single-file
     FolderArchive, or bypassing `CreateDefaultInstance` for the lower-level
     `Context::CreateInstance(name, shortName, components)` overload.
+
+[Issue #14](https://github.com/liz-baker/libultraship-wiiu/issues/14) tracks a
+follow-up once Stage 4 lands: Stages 1 and 2 currently exercise the raw Wii U
+input/audio backends (`WiiUInput`, `WiiUAudioPlayer`) directly rather than
+libultraship's `ControlDeck`/mapping and audio-manager abstractions, so they
+don't yet catch bugs in those layers the way Stage 3's GX2 test catches bugs
+in `GfxRenderingAPIGX2`.
 
 ## ⚠️ Temporary CI changes made during the Wii U port (now reverted)
 

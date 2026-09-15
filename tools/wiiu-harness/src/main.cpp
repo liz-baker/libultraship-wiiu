@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -15,10 +17,15 @@
 #include <coreinit/screen.h>
 #include <coreinit/thread.h>
 #include <coreinit/time.h>
+#include <whb/log.h>
 #include <whb/proc.h>
 #include <whb/sdcard.h>
 
+#include "imgui.h"
+#include "fast/backends/gfx_gx2.h"
+#include "fast/backends/gfx_wiiu.h"
 #include "ship/audio/AudioPlayer.h"
+#include "ship/port/wiiu/ImGui/imgui_impl_gx2.h"
 #include "ship/port/wiiu/WiiUImpl.h"
 #include "ship/port/wiiu/WiiUInput.h"
 
@@ -27,7 +34,7 @@ namespace {
 void* sScreenBufferTV = nullptr;
 void* sScreenBufferDRC = nullptr;
 
-enum class Mode { Menu, BootLink, InputReadout, Audio };
+enum class Mode { Menu, BootLink, InputReadout, Audio, Gx2Renderer };
 
 struct MenuItem {
     const char* label;
@@ -38,6 +45,7 @@ constexpr MenuItem kMenuItems[] = {
     { "Stage 0: Boot & Link", Mode::BootLink },
     { "Stage 1: Input Readout", Mode::InputReadout },
     { "Stage 2: AX Audio", Mode::Audio },
+    { "Stage 3: GX2 Renderer", Mode::Gx2Renderer },
 };
 constexpr int kMenuItemCount = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 
@@ -474,6 +482,326 @@ void PumpAudioTest(AudioTestState& state) {
     }
 }
 
+// --- Stage 3: GX2 renderer ---------------------------------------------------------------
+//
+// Unlike Stages 0-2, this drives Fast::GfxRenderingAPIGX2 directly instead of talking to the
+// raw Wii U SDK, on purpose: that's the layer a real N64 decomp actually calls (through the F3D
+// microcode interpreter), so it's the layer worth de-risking before one gets ported here. There
+// is no display list here, so shader IDs are hand-encoded the same way gfx_cc_get_features()
+// would decode them from one (see include/fast/interpreter.h's CCFeatures/SHADER_* enum).
+//
+// GX2 also can't share the screen with OSScreen (both fight over the TV/DRC scan buffers), so
+// entering this stage is a one-way trip for the run: OSScreen stays torn down and an ImGui
+// overlay (using ImGui's built-in font, not Fast3dGui/OTR) replaces it. B exits the harness
+// instead of returning to the menu, and WHBLogUdp (already live in debug builds via
+// Ship::WiiU::Init) replaces on-screen text for anything not shown by the overlay.
+
+// SHADER_INPUT_1 / SHADER_TEXEL0 from the SHADER_* enum in include/fast/interpreter.h.
+// Not included directly: interpreter.h pulls in the whole OTR resource/texture-cache
+// machinery, which this stage deliberately stays independent of.
+constexpr uint64_t kShaderInput1 = 1;
+constexpr uint64_t kShaderTexel0 = 8;
+
+// Packs one CCFeatures combiner slot into a shaderId0, matching gfx_cc_get_features()'s
+// decode: cc_features->c[i][j][k] = shader_id0 >> (i*32 + j*16 + k*4) & 0xf.
+// i: 0 = color cycle, 1 = alpha cycle. j: cycle 0/1 (only cycle 0 is used here). k: A,B,C,D.
+constexpr uint64_t PackCCSlot(int i, int j, int k, uint64_t value) {
+    return value << (i * 32 + j * 16 + k * 4);
+}
+
+// D-only (A=B=C=SHADER_0) on both cycle-0 combiner stages: (A-B)*C+D reduces to a passthrough
+// of D, so this makes a shader whose single "attribute" ends up as the final color untouched.
+constexpr uint64_t ShaderIdForPassthrough(uint64_t d) {
+    return PackCCSlot(0, 0, 3, d) | PackCCSlot(1, 0, 3, d);
+}
+
+// Untextured, per-vertex-colored, no fog/lighting: color and alpha both pass through aInput1.
+constexpr uint64_t kCubeShaderId0 = ShaderIdForPassthrough(kShaderInput1);
+constexpr uint64_t kCubeShaderId1 = 0;
+
+// Textured, no vertex color: color and alpha both pass through the sampled texel.
+constexpr uint64_t kQuadShaderId0 = ShaderIdForPassthrough(kShaderTexel0);
+constexpr uint64_t kQuadShaderId1 = 0;
+
+using Mat4 = std::array<std::array<float, 4>, 4>;
+
+constexpr Mat4 Mat4Identity() {
+    return { { { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 }, { 0, 0, 0, 1 } } };
+}
+
+Mat4 Mat4Multiply(const Mat4& a, const Mat4& b) {
+    Mat4 out{};
+    for (int row = 0; row < 4; row++) {
+        for (int col = 0; col < 4; col++) {
+            float sum = 0.0f;
+            for (int k = 0; k < 4; k++) {
+                sum += a[row][k] * b[k][col];
+            }
+            out[row][col] = sum;
+        }
+    }
+    return out;
+}
+
+Mat4 Mat4RotateY(float radians) {
+    Mat4 m = Mat4Identity();
+    m[0][0] = std::cos(radians);
+    m[0][2] = std::sin(radians);
+    m[2][0] = -std::sin(radians);
+    m[2][2] = std::cos(radians);
+    return m;
+}
+
+Mat4 Mat4RotateX(float radians) {
+    Mat4 m = Mat4Identity();
+    m[1][1] = std::cos(radians);
+    m[1][2] = -std::sin(radians);
+    m[2][1] = std::sin(radians);
+    m[2][2] = std::cos(radians);
+    return m;
+}
+
+// D3D-style projection (depth range 0..1, matching GX2SetViewport's near/far of 0.0f/1.0f).
+Mat4 Mat4Perspective(float fovYRadians, float aspect, float zNear, float zFar) {
+    Mat4 m{};
+    const float f = 1.0f / std::tan(fovYRadians * 0.5f);
+    m[0][0] = f / aspect;
+    m[1][1] = f;
+    m[2][2] = zFar / (zFar - zNear);
+    m[2][3] = -zNear * zFar / (zFar - zNear);
+    m[3][2] = 1.0f;
+    return m;
+}
+
+// GX2's vertex shader does no MVP transform of its own (see generateVertexShader() in
+// src/fast/backends/gx2_shader_gen.cpp) - a real display list's CPU-side matrix stack has
+// already put vertices in clip space by the time they reach DrawTriangles(), so this harness
+// has to do the same multiply itself.
+std::array<float, 4> Mat4TransformPoint(const Mat4& m, float x, float y, float z) {
+    const std::array<float, 4> v = { x, y, z, 1.0f };
+    std::array<float, 4> out{};
+    for (int row = 0; row < 4; row++) {
+        out[row] = m[row][0] * v[0] + m[row][1] * v[1] + m[row][2] * v[2] + m[row][3] * v[3];
+    }
+    return out;
+}
+
+void AppendVertex(std::vector<float>& out, const Mat4& mvp, float x, float y, float z, float attr0, float attr1,
+                  float attr2, float attr3) {
+    const std::array<float, 4> clip = Mat4TransformPoint(mvp, x, y, z);
+    out.insert(out.end(), { clip[0], clip[1], clip[2], clip[3], attr0, attr1, attr2, attr3 });
+}
+
+struct CubeFace {
+    std::array<int, 4> cornerIndices; // into kCubeCorners, wound CCW when viewed from outside
+    std::array<float, 3> color;
+};
+
+constexpr std::array<std::array<float, 3>, 8> kCubeCorners = { {
+    { -1, -1, -1 },
+    { 1, -1, -1 },
+    { 1, 1, -1 },
+    { -1, 1, -1 },
+    { -1, -1, 1 },
+    { 1, -1, 1 },
+    { 1, 1, 1 },
+    { -1, 1, 1 },
+} };
+
+const std::array<CubeFace, 6> kCubeFaces = { {
+    { { 0, 1, 2, 3 }, { 1.0f, 0.2f, 0.2f } }, // back  (-Z), red
+    { { 5, 4, 7, 6 }, { 0.2f, 1.0f, 0.2f } }, // front (+Z), green
+    { { 4, 0, 3, 7 }, { 0.2f, 0.2f, 1.0f } }, // left  (-X), blue
+    { { 1, 5, 6, 2 }, { 1.0f, 1.0f, 0.2f } }, // right (+X), yellow
+    { { 3, 2, 6, 7 }, { 1.0f, 0.2f, 1.0f } }, // top   (+Y), magenta
+    { { 4, 5, 1, 0 }, { 0.2f, 1.0f, 1.0f } }, // bottom(-Y), cyan
+} };
+
+// A hand-made 8x8 RGBA8 checkerboard, uploaded once via UploadTexture() - deliberately not an
+// OTR-packed asset, since this stage stays independent of the resource/archive pipeline.
+constexpr uint32_t kCheckerSize = 8;
+std::array<uint8_t, kCheckerSize * kCheckerSize * 4> MakeCheckerTexture() {
+    std::array<uint8_t, kCheckerSize * kCheckerSize * 4> pixels{};
+    for (uint32_t y = 0; y < kCheckerSize; y++) {
+        for (uint32_t x = 0; x < kCheckerSize; x++) {
+            const bool light = ((x + y) & 1) == 0;
+            uint8_t* p = &pixels[(y * kCheckerSize + x) * 4];
+            p[0] = light ? 240 : 40;
+            p[1] = light ? 200 : 40;
+            p[2] = light ? 40 : 120;
+            p[3] = 255;
+        }
+    }
+    return pixels;
+}
+
+struct Gx2TestState {
+    // Leaked deliberately: GfxWindowBackendWiiU/GfxRenderingAPIGX2 own the GX2 context and
+    // scan buffers for the rest of the process's life once constructed, and tearing GX2 down
+    // to hand the screen back to OSScreen isn't supported here (see the comment above). The
+    // harness exits instead of returning to the menu, so these live until process exit.
+    Fast::GfxWindowBackendWiiU* window = nullptr;
+    Fast::GfxRenderingAPIGX2* api = nullptr;
+
+    Fast::ShaderProgram* cubeShader = nullptr;
+    Fast::ShaderProgram* quadShader = nullptr;
+    uint32_t checkerTextureId = 0;
+    bool imguiReady = false;
+
+    uint32_t frameCount = 0;
+    float cubeAngle = 0.0f;
+    bool initFailed = false;
+};
+
+void StartGx2Test(Gx2TestState& state) {
+    WHBLogPrint("Stage 3: bringing up GfxWindowBackendWiiU + GfxRenderingAPIGX2");
+
+    state.window = new Fast::GfxWindowBackendWiiU(nullptr);
+    state.api = new Fast::GfxRenderingAPIGX2();
+
+    state.window->Init("lus-harness", state.api->GetName(), true, WIIU_DEFAULT_FB_WIDTH, WIIU_DEFAULT_FB_HEIGHT, 0, 0);
+    state.api->Init();
+    state.api->SetViewport(0, 0, WIIU_DEFAULT_FB_WIDTH, WIIU_DEFAULT_FB_HEIGHT);
+    state.api->SetScissor(0, 0, WIIU_DEFAULT_FB_WIDTH, WIIU_DEFAULT_FB_HEIGHT);
+    state.api->SetDepthTestAndMask(true, true);
+
+    state.cubeShader = state.api->CreateAndLoadNewShader(kCubeShaderId0, kCubeShaderId1);
+    state.quadShader = state.api->CreateAndLoadNewShader(kQuadShaderId0, kQuadShaderId1);
+    if (!state.cubeShader || !state.quadShader) {
+        WHBLogPrint("Stage 3: shader generation FAILED");
+        state.initFailed = true;
+        return;
+    }
+
+    state.checkerTextureId = state.api->NewTexture();
+    state.api->SelectTexture(/*tile=*/0, state.checkerTextureId);
+    const std::array<uint8_t, kCheckerSize* kCheckerSize* 4> checker = MakeCheckerTexture();
+    state.api->UploadTexture(checker.data(), kCheckerSize, kCheckerSize);
+    // 0 == G_TX_NOMIRROR|G_TX_WRAP (libultraship/libultra/gbi.h) - passed as a literal so this
+    // stage doesn't need to pull in the GBI headers just for two texture-wrap constants.
+    state.api->SetSamplerParameters(/*tile=*/0, /*linear_filter=*/false, 0, 0);
+
+    ImGui::CreateContext();
+    state.imguiReady = ImGui_ImplGX2_Init();
+    if (!state.imguiReady) {
+        WHBLogPrint("Stage 3: ImGui_ImplGX2_Init FAILED (continuing without the overlay)");
+    }
+
+    WHBLogPrint("Stage 3: init OK");
+}
+
+void StopGx2Test(Gx2TestState& state) {
+    if (state.imguiReady) {
+        ImGui_ImplGX2_Shutdown();
+        ImGui::DestroyContext();
+    }
+    // state.window / state.api are intentionally not deleted - see the comment on Gx2TestState.
+}
+
+void PumpAndRenderGx2Test(Gx2TestState& state, const std::string& resultsPath, int& periodicResultsCounter) {
+    if (state.initFailed) {
+        return;
+    }
+
+    state.window->HandleEvents();
+    state.frameCount++;
+    state.cubeAngle += 0.02f;
+
+    state.api->StartFrame();
+    state.api->StartDrawToFramebuffer(/*fbId=*/0, /*noiseScale=*/1.0f);
+    state.api->ClearFramebuffer(/*color=*/true, /*depth=*/true);
+
+    // zFar kept close (20, not 100) so the cube/quad's z=4..6 view-space range doesn't get
+    // squeezed into the last sliver of the [0,1] depth buffer.
+    const Mat4 projection = Mat4Perspective(60.0f * (3.14159265f / 180.0f),
+                                            (float)WIIU_DEFAULT_FB_WIDTH / (float)WIIU_DEFAULT_FB_HEIGHT, 0.1f, 20.0f);
+    Mat4 view = Mat4Identity();
+    view[2][3] = 5.0f; // push the scene 5 units down +Z (view space) in front of the camera
+
+    // Rotating, untextured, per-vertex-colored cube - exercises CreateAndLoadNewShader's
+    // vertex-color path and DrawTriangles' vertex submission.
+    {
+        const Mat4 model = Mat4Multiply(Mat4RotateY(state.cubeAngle), Mat4RotateX(state.cubeAngle * 0.7f));
+        const Mat4 mvp = Mat4Multiply(projection, Mat4Multiply(view, model));
+
+        std::vector<float> vbo;
+        vbo.reserve(kCubeFaces.size() * 6 * 8);
+        for (const CubeFace& face : kCubeFaces) {
+            const auto& c0 = kCubeCorners[face.cornerIndices[0]];
+            const auto& c1 = kCubeCorners[face.cornerIndices[1]];
+            const auto& c2 = kCubeCorners[face.cornerIndices[2]];
+            const auto& c3 = kCubeCorners[face.cornerIndices[3]];
+            const auto AppendCorner = [&](const std::array<float, 3>& corner) {
+                AppendVertex(vbo, mvp, corner[0], corner[1], corner[2], face.color[0], face.color[1], face.color[2],
+                             1.0f);
+            };
+            AppendCorner(c0);
+            AppendCorner(c1);
+            AppendCorner(c2);
+            AppendCorner(c0);
+            AppendCorner(c2);
+            AppendCorner(c3);
+        }
+
+        state.api->LoadShader(state.cubeShader);
+        state.api->DrawTriangles(vbo.data(), vbo.size(), vbo.size() / 8 / 3);
+    }
+
+    // Static textured quad below the cube - exercises NewTexture/SelectTexture/UploadTexture/
+    // SetSamplerParameters and the textured shader path, independent of vertex color.
+    {
+        const Mat4 mvp = Mat4Multiply(projection, view);
+        std::vector<float> vbo;
+        AppendVertex(vbo, mvp, -1.5f, -2.2f, -1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
+        AppendVertex(vbo, mvp, 1.5f, -2.2f, -1.0f, 1.0f, 1.0f, 0.0f, 0.0f);
+        AppendVertex(vbo, mvp, 1.5f, -2.2f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f);
+        AppendVertex(vbo, mvp, -1.5f, -2.2f, -1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
+        AppendVertex(vbo, mvp, 1.5f, -2.2f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f);
+        AppendVertex(vbo, mvp, -1.5f, -2.2f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+
+        state.api->LoadShader(state.quadShader);
+        state.api->SelectTexture(/*tile=*/0, state.checkerTextureId);
+        state.api->DrawTriangles(vbo.data(), vbo.size(), vbo.size() / 8 / 3);
+    }
+
+    if (state.imguiReady) {
+        ImGui_ImplGX2_NewFrame();
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2((float)WIIU_DEFAULT_FB_WIDTH, (float)WIIU_DEFAULT_FB_HEIGHT);
+        io.DeltaTime = std::max(frametime / 1000000.0f, 1.0f / 1000.0f);
+        ImGui::NewFrame();
+        ImGui::Begin("libultraship Wii U harness - Stage 3");
+        ImGui::Text("frame: %u", state.frameCount);
+        ImGui::Text("cube shader: %s", state.cubeShader ? "OK" : "FAILED");
+        ImGui::Text("quad shader: %s", state.quadShader ? "OK" : "FAILED");
+        ImGui::Text("checker texture id: %u", state.checkerTextureId);
+        ImGui::Text("press B to exit (no return to menu once GX2 has taken the screen)");
+        ImGui::End();
+        ImGui::ShowDemoWindow();
+        ImGui::Render();
+        ImGui_ImplGX2_RenderDrawData(ImGui::GetDrawData());
+    }
+
+    state.api->EndFrame();
+    state.window->SwapBuffersBegin();
+    state.api->FinishRender();
+    state.window->SwapBuffersEnd();
+
+    if (!resultsPath.empty() && periodicResultsCounter-- <= 0) {
+        FILE* f = std::fopen(resultsPath.c_str(), "w");
+        if (f != nullptr) {
+            std::fprintf(f, "libultraship Wii U harness - Stage 3: GX2 renderer\n");
+            std::fprintf(f, "frame: %u\n", state.frameCount);
+            std::fprintf(f, "cube shader: %s\n", state.cubeShader ? "OK" : "FAILED");
+            std::fprintf(f, "quad shader: %s\n", state.quadShader ? "OK" : "FAILED");
+            std::fprintf(f, "checker texture id: %u\n", state.checkerTextureId);
+            std::fprintf(f, "imgui overlay: %s\n", state.imguiReady ? "OK" : "FAILED");
+            std::fclose(f);
+        }
+        periodicResultsCounter = 30; // roughly once a second at 60fps-ish
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -509,8 +837,10 @@ int main(int argc, char** argv) {
     uint32_t prevGamePadHeld = 0;
     int periodicResultsCounter = 0;
     AudioTestState audioTestState;
+    Gx2TestState gx2TestState;
+    bool quitRequested = false;
 
-    while (WHBProcIsRunning()) {
+    while (WHBProcIsRunning() && !quitRequested) {
         Ship::WiiU::Update();
 
         const uint32_t gamePadHeld = Ship::WiiU::GetButtonsHeld(WIIU_DEVICE_GAMEPAD);
@@ -529,7 +859,17 @@ int main(int argc, char** argv) {
                 periodicResultsCounter = 0;
                 if (mode == Mode::Audio) {
                     StartAudioTest(audioTestState);
+                } else if (mode == Mode::Gx2Renderer) {
+                    StartGx2Test(gx2TestState);
                 }
+            }
+        } else if (mode == Mode::Gx2Renderer) {
+            // GX2 has taken the screen from OSScreen for the rest of this run (see the comment
+            // above Gx2TestState) - B exits the harness instead of returning to the menu.
+            if (pressed & Ship::WiiU::WIIU_BUTTON_B) {
+                StopGx2Test(gx2TestState);
+                quitRequested = true;
+                continue; // skip PumpAndRenderGx2Test below - ImGui was just torn down
             }
         } else if (pressed & Ship::WiiU::WIIU_BUTTON_B) {
             if (mode == Mode::Audio) {
@@ -538,6 +878,12 @@ int main(int argc, char** argv) {
             mode = Mode::Menu;
         } else if (mode == Mode::Audio && (pressed & Ship::WiiU::WIIU_BUTTON_X)) {
             audioTestState.channelMode = NextChannelMode(audioTestState.channelMode);
+        }
+
+        if (mode == Mode::Gx2Renderer) {
+            // Own frame loop: OSScreen must not touch the screen while GX2 owns it.
+            PumpAndRenderGx2Test(gx2TestState, resultsPath, periodicResultsCounter);
+            continue;
         }
 
         OSScreenClearBufferEx(SCREEN_TV, 0);
@@ -565,6 +911,8 @@ int main(int argc, char** argv) {
                     periodicResultsCounter = 30; // roughly once a second at 33ms/frame
                 }
                 break;
+            case Mode::Gx2Renderer:
+                break; // handled above, before OSScreen touches the buffers
         }
 
         DCFlushRange(sScreenBufferTV, bufferSizeTV);

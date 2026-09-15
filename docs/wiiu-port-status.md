@@ -186,13 +186,35 @@ is downmixed to the front pair rather than driving AX's surround path.
      flag (approaching the internal ring size risks the writer lapping the
      read head) — all surfaced live on screen and in `results.txt`, so a
      dropout is confirmed by the display rather than by ear alone.
-   - **Stage 3 — GX2 renderer** (open): tear down OSScreen (it and GX2 can't
-     both own the display — switch output to `WHBLogUdp` port 4405 and/or the
-     results file), bring up `GfxWindowBackendWiiU(nullptr)` +
-     `GfxRenderingAPIGX2`, clear to a cycling color, swap, then a raw ImGui
-     demo window using ImGui's built-in font (confirmed font-loading-free —
-     `Fast3dGui`'s OTR-backed font path is a separate concern from ImGui's
-     own default bitmap font).
+   - **Stage 3 — GX2 renderer** (harness code landed; not yet run on real
+     hardware): drives `GfxRenderingAPIGX2` itself directly, deliberately not
+     raw GX2 calls — raw GX2 would only prove the console can draw a
+     triangle, and wouldn't touch a single line of libultraship's own
+     rendering code (that's what the GX2 ImGui backend already does, as a
+     separate, parallel path). `GfxRenderingAPIGX2` is the layer a real N64
+     decomp actually calls, through the Fast3D microcode interpreter, so it's
+     the layer worth de-risking here. With no display list to drive it from,
+     shader IDs for two minimal configs — untextured per-vertex-color, and
+     textured with no vertex color — are hand-encoded the way
+     `gfx_cc_get_features()` would decode them from a real one. Brings up
+     `GfxWindowBackendWiiU(nullptr)` + `GfxRenderingAPIGX2`, CPU-transforms a
+     rotating cube's vertices into clip space every frame and submits them via
+     `DrawTriangles`, and separately drives
+     `NewTexture`/`UploadTexture`/`SetSamplerParameters` with a hand-made
+     checkerboard on a static quad. One finding from building this: GX2's
+     vertex shader does no MVP multiply of its own
+     (`generateVertexShader()` in `src/fast/backends/gx2_shader_gen.cpp`) — a
+     real display list's CPU-side matrix stack has already put vertices in
+     clip space by the time they reach `DrawTriangles()`, so the harness has
+     to do the same multiply itself; this was confirmed by reading the
+     shader-gen code, not assumed. Tears down OSScreen (it and GX2 can't both
+     own the display — output moves to `WHBLogUdp` port 4405 and/or the
+     results file) and layers a raw ImGui demo window on top using ImGui's
+     built-in font (confirmed font-loading-free — `Fast3dGui`'s OTR-backed
+     font path is a separate concern from ImGui's own default bitmap font).
+     Entering this stage is a one-way trip for the run: OSScreen isn't torn
+     back down once GX2 has taken the screen, so `B` exits the harness
+     instead of returning to the menu.
    - **Stage 4 — full `Context` + mapping layer** (open): drive a
      `ControlDeck` via `Context::CreateDefaultInstance(...)` to exercise
      `mapping/wiiu/` end to end (built-in defaults, rumble). Confirmed during
