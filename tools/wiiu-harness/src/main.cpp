@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -166,8 +167,79 @@ std::string DescribeAxes(int32_t deviceIndex) {
     return buf;
 }
 
+// Exercises the WiiUAtomics.cpp __atomic_fetch_add_8 shim (see issue #16) under
+// genuine cross-core contention: three threads, one pinned to each of the
+// Espresso's real cores, all hammering the same std::atomic<uint64_t> counter.
+// A broken (unsynchronized) shim loses increments under real contention in a
+// way an emulator or single-core run won't reliably reproduce, so this has to
+// run on hardware to mean anything.
+constexpr uint32_t kAtomicStressThreadCount = 3;
+constexpr uint64_t kAtomicStressIncrementsPerThread = 100000;
+constexpr uint32_t kAtomicStressStackSize = 16 * 1024;
+
+struct AtomicStressResult {
+    bool ran = false;
+    uint64_t expected = 0;
+    uint64_t actual = 0;
+    bool Passed() const {
+        return ran && actual == expected;
+    }
+};
+
+int AtomicStressThreadEntry(int /*argc*/, const char** argv) {
+    auto* counter = reinterpret_cast<std::atomic<uint64_t>*>(argv);
+    for (uint64_t i = 0; i < kAtomicStressIncrementsPerThread; i++) {
+        counter->fetch_add(1, std::memory_order_relaxed);
+    }
+    return 0;
+}
+
+AtomicStressResult RunAtomicStressTest() {
+    static const OSThreadAttributes kCoreAffinity[kAtomicStressThreadCount] = {
+        OS_THREAD_ATTRIB_AFFINITY_CPU0,
+        OS_THREAD_ATTRIB_AFFINITY_CPU1,
+        OS_THREAD_ATTRIB_AFFINITY_CPU2,
+    };
+
+    std::atomic<uint64_t> counter{ 0 };
+    alignas(8) OSThread threads[kAtomicStressThreadCount];
+    void* stacks[kAtomicStressThreadCount] = {};
+
+    uint32_t started = 0;
+    for (; started < kAtomicStressThreadCount; started++) {
+        void* stackBase = MEMAllocFromDefaultHeapEx(kAtomicStressStackSize, 8);
+        if (stackBase == nullptr) {
+            break;
+        }
+        stacks[started] = stackBase;
+        void* stackTop = static_cast<uint8_t*>(stackBase) + kAtomicStressStackSize;
+        const BOOL created =
+            OSCreateThread(&threads[started], AtomicStressThreadEntry, 0, reinterpret_cast<char*>(&counter), stackTop,
+                           kAtomicStressStackSize, 16, kCoreAffinity[started]);
+        if (!created) {
+            MEMFreeToDefaultHeap(stackBase);
+            stacks[started] = nullptr;
+            break;
+        }
+        OSResumeThread(&threads[started]);
+    }
+
+    for (uint32_t i = 0; i < started; i++) {
+        int exitCode = 0;
+        OSJoinThread(&threads[i], &exitCode);
+        MEMFreeToDefaultHeap(stacks[i]);
+    }
+
+    AtomicStressResult result;
+    result.ran = (started == kAtomicStressThreadCount);
+    result.expected = static_cast<uint64_t>(kAtomicStressThreadCount) * kAtomicStressIncrementsPerThread;
+    result.actual = counter.load(std::memory_order_relaxed);
+    return result;
+}
+
 // Writes a snapshot of the boot & link checks to results.txt.
-void WriteBootLinkResults(const std::string& resultsPath, const std::string& heapLine) {
+void WriteBootLinkResults(const std::string& resultsPath, const std::string& heapLine,
+                          const AtomicStressResult& atomicStress) {
     FILE* f = std::fopen(resultsPath.c_str(), "w");
     if (f == nullptr) {
         return;
@@ -177,7 +249,14 @@ void WriteBootLinkResults(const std::string& resultsPath, const std::string& hea
     std::fprintf(f, "built: %s %s\n", __DATE__, __TIME__);
     std::fprintf(f, "%s\n", heapLine.c_str());
     std::fprintf(f, "sd write: PASS (%s)\n", resultsPath.c_str());
-    std::fprintf(f, "stage 0: PASS\n");
+    if (!atomicStress.ran) {
+        std::fprintf(f, "atomics stress (3-core __atomic_fetch_add_8): FAIL (could not start all threads)\n");
+    } else {
+        std::fprintf(f, "atomics stress (3-core __atomic_fetch_add_8): %s (%llu / %llu increments)\n",
+                     atomicStress.Passed() ? "PASS" : "FAIL", static_cast<unsigned long long>(atomicStress.actual),
+                     static_cast<unsigned long long>(atomicStress.expected));
+    }
+    std::fprintf(f, "stage 0: %s\n", atomicStress.Passed() ? "PASS" : "FAIL");
     std::fclose(f);
 }
 
@@ -233,7 +312,8 @@ void RenderMenu(int cursor) {
     PrintBoth(row++, "D-Pad Up/Down to move, A to select, HOME to exit.");
 }
 
-void RenderBootLink(const std::string& resultsPath, const std::string& heapLine, bool sdWriteOk) {
+void RenderBootLink(const std::string& resultsPath, const std::string& heapLine, bool sdWriteOk,
+                    const AtomicStressResult& atomicStress) {
     int row = 0;
     PrintBoth(row++, "libultraship Wii U harness");
     PrintBoth(row++, "Stage 0: boot & link");
@@ -246,6 +326,16 @@ void RenderBootLink(const std::string& resultsPath, const std::string& heapLine,
     PrintBoth(row++, sdWriteOk ? ("results: " + resultsPath) : "");
     PrintBoth(row++, "");
     PrintBoth(row++, "libultraship.a linked OK (you are looking at proof)");
+    PrintBoth(row++, "");
+    char buf[80];
+    if (!atomicStress.ran) {
+        PrintBoth(row++, "atomics stress: FAIL (could not start all 3 core threads)");
+    } else {
+        std::snprintf(buf, sizeof(buf), "atomics stress (3-core): %s (%llu / %llu)",
+                      atomicStress.Passed() ? "PASS" : "FAIL", static_cast<unsigned long long>(atomicStress.actual),
+                      static_cast<unsigned long long>(atomicStress.expected));
+        PrintBoth(row++, buf);
+    }
     PrintBoth(row++, "");
     PrintBoth(row++, "Press B to return to menu. Press HOME to exit.");
 }
@@ -408,8 +498,10 @@ int main(int argc, char** argv) {
     std::snprintf(heapLineBuf, sizeof(heapLineBuf), "MEM2 heap free: %u bytes", DefaultHeapFreeBytes());
     const std::string heapLine = heapLineBuf;
 
+    const AtomicStressResult atomicStress = RunAtomicStressTest();
+
     if (sdWriteOk) {
-        WriteBootLinkResults(resultsPath, heapLine);
+        WriteBootLinkResults(resultsPath, heapLine, atomicStress);
     }
 
     Mode mode = Mode::Menu;
@@ -456,7 +548,7 @@ int main(int argc, char** argv) {
                 RenderMenu(menuCursor);
                 break;
             case Mode::BootLink:
-                RenderBootLink(resultsPath, heapLine, sdWriteOk);
+                RenderBootLink(resultsPath, heapLine, sdWriteOk, atomicStress);
                 break;
             case Mode::InputReadout:
                 RenderInputReadout();
