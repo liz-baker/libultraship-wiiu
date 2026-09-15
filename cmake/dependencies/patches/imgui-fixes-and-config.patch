@@ -103,10 +103,16 @@ index a1e29e849bc8..ee64116ff0cf 100644
  
  //---- Use 32-bit vertex indices (default is 16-bit) is one way to allow large meshes with more than 64K vertices.
  // Your renderer backend will need to support it (most example renderer backends support both 16/32-bit indices).
-@@ -139,3 +139,6 @@ namespace ImGui
+@@ -139,3 +139,12 @@ namespace ImGui
      void MyFunction(const char* name, MyMatrix44* mtx);
  }
  */
 +
 +// handle https://github.com/ocornut/imgui/issues/1641 the old way
 +#define ImTextureID void*
++
++// devkitPPC/CafeOS has no fork()/execvp() (no process spawning on console) - the same reason
++// imgui.cpp already excludes __3DS__ from its default shell-open handler, Wii U needs the same.
++#ifdef __WIIU__
++#define IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS
++#endif

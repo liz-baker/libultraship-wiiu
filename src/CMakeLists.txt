@@ -110,6 +110,13 @@ if (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
         ${DEVKITPRO}/portlibs/ppc/include/
         ${DEVKITPRO}/wut/include/
     )
+
+    # The Wii U's PowerPC 750 ("Espresso") has no native 8-byte atomic RMW instruction, so
+    # std::shared_ptr's atomic refcounting (and any std::atomic<uint64_t>/int64_t) needs
+    # libatomic's software fallback. PUBLIC so it's on the link line of any final CafeOS
+    # executable linking libultraship, not just this target (which, being a static library,
+    # never itself triggers the undefined-symbol error - only a linked .rpx does).
+    target_link_libraries(libultraship PUBLIC atomic)
 endif()
 
 #=================== Linking ===================
