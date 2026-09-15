@@ -30,7 +30,8 @@ phases land.
   the controller layer from a normalized VPAD + KPAD input layer
   (`ship/port/wiiu/WiiUInput.h`), with built-in Wii U defaults; audio plays
   through a native AX player (`AudioBackend::AX`). Not yet covered: DRC gyro and
-  the touch screen, and the port has still not been run on hardware.
+  the touch screen (tracked in [issue #19](https://github.com/liz-baker/libultraship-wiiu/issues/19)),
+  and the port has still not been run on hardware.
 - [x] **Phase D — Finalize CI.** Done: the desktop `build-validation` /
   `test-validation` workflows are back to running on every push and PR (see
   the (now-historical) revert checklist below). The `build-wiiu` compile step
@@ -39,8 +40,8 @@ phases land.
 - [ ] **Phase E — Wii U on-hardware test harness.** [Issue #5](https://github.com/liz-baker/libultraship-wiiu/issues/5).
   The port is compile-clean end to end but **nothing in it has ever executed**
   on a console or emulator. `tools/wiiu-harness/` builds a loadable `.wuhb`
-  (target: Aroma, plus `wiiload` for iteration) in 5 stages, ordered so each
-  one isolates a failure before the next stage adds complexity. The harness's
+  (target: Aroma, plus `wiiload` for iteration) in staged screens, ordered so
+  each one isolates a failure before the next stage adds complexity. The harness's
   main screen is now a D-Pad/A text menu that picks which stage to test (`B`
   returns to it from any stage) rather than cycling through them with `+`, so
   the list can keep growing without becoming tedious to navigate. Full design,
@@ -100,21 +101,42 @@ phases land.
     `__atomic_fetch_add_8`/`__atomic_load_8` shim, verified under genuine
     cross-core contention by a 3-thread, one-per-Espresso-core stress test
     added to Stage 0).
-  - [ ] **Stage 4 — full `Context` + mapping layer.** Drive a `ControlDeck`
-    through `Context::CreateDefaultInstance(...)` to exercise
-    `mapping/wiiu/` end to end (built-in defaults, rumble). Open question,
-    confirmed during Stage 0 investigation: `CreateDefaultInstance` cannot
-    succeed with zero archives (`ArchiveManager::Init` requires at least one
-    loaded archive) — this stage needs either a minimal single-file
-    FolderArchive, or bypassing `CreateDefaultInstance` for the lower-level
-    `Context::CreateInstance(name, shortName, components)` overload.
+  - [x] **Input/audio through libultraship's own abstractions** (not a
+    numbered stage — landed in `tools/wiiu-harness/src/main.cpp` ahead of
+    Stage 4, closing [issue #14](https://github.com/liz-baker/libultraship-wiiu/issues/14)).
+    Stages 1/2 above only exercised the raw Wii U backends (`WiiUInput`,
+    `WiiUAudioPlayer`) directly, not the `ControlDeck`/mapping layer or audio
+    manager a real decomp actually calls. The harness's "Input: ControlDeck
+    Mapping" mode drives a real `LUS::ControlDeck` through a minimal
+    `Ship::Window` stub (`HarnessWindow.h`) — no full `Context` needed, since
+    `GamepadGameInputBlocked()` only needs `Gui::GetMenuOrMenubarVisible()`,
+    which is safe on a `Gui` that's never had `Init()` called. The audio mode
+    already goes through `Ship::Audio`/`Context::GetAudio()` rather than
+    `WiiUAudioPlayer` directly. This narrows what Stage 4 below still needs
+    to prove.
+  - [ ] **Stage 4 — full `Context` + a real display list.** [Issue #5](https://github.com/liz-baker/libultraship-wiiu/issues/5)
+    (scope revised). With mapping and audio already validated above, what's
+    left is standing up a genuine `Context` and running something through
+    the F3D command interpreter (`src/fast/interpreter.cpp`, already part of
+    libultraship — no microcode or decomp source needs copying in) — the one
+    layer no harness stage has touched yet. Plan: a minimal `FolderArchive`
+    fixture (a handful of loose files, no `.o2r`/OTR build pipeline needed)
+    so `ArchiveManager::Init` succeeds — confirmed during Stage 0
+    investigation that `Context::CreateInstance(...)`/`CreateDefaultInstance`
+    require at least one loaded archive — plus a hand-authored `Gfx` display
+    list (built the same way Stage 3 hand-encoded shader IDs) exercising a
+    vertex load, one draw call, and a texture bind through the real
+    interpreter → `GfxRenderingAPIGX2` path, and a check of whether
+    `Fast3dGui`'s OTR-backed font path (untested — Stage 3 used ImGui's
+    built-in font to avoid it) works or fails cleanly.
 
-[Issue #14](https://github.com/liz-baker/libultraship-wiiu/issues/14) tracks a
-follow-up once Stage 4 lands: Stages 1 and 2 currently exercise the raw Wii U
-input/audio backends (`WiiUInput`, `WiiUAudioPlayer`) directly rather than
-libultraship's `ControlDeck`/mapping and audio-manager abstractions, so they
-don't yet catch bugs in those layers the way Stage 3's GX2 test catches bugs
-in `GfxRenderingAPIGX2`.
+DRC gyro and touch screen support are tracked separately in
+[issue #19](https://github.com/liz-baker/libultraship-wiiu/issues/19) — split
+out so they don't block Stage 4 landing on real hardware. Gyro has an
+existing interface waiting for a backend (`ControllerGyroMapping`, mirroring
+the `mapping/wiiu/` pattern already used for buttons/axis-direction/rumble);
+touch has no mapping abstraction anywhere in libultraship yet and needs a
+design pass of its own.
 
 ## ⚠️ Temporary CI changes made during the Wii U port (now reverted)
 

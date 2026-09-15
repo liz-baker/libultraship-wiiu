@@ -45,11 +45,76 @@
 #include "ship/controller/controldevice/controller/ControllerRumble.h"
 #include "ship/controller/controldevice/controller/mapping/wiiu/WiiUMapping.h"
 #include "ship/controller/physicaldevice/PhysicalDeviceType.h"
+#include "ship/core/Context.h"
 #include "ship/port/wiiu/ImGui/imgui_impl_gx2.h"
 #include "ship/port/wiiu/WiiUImpl.h"
 #include "ship/port/wiiu/WiiUInput.h"
+#include "ship/resource/ResourceManager.h"
+#include "ship/resource/archive/ArchiveManager.h"
+#include "ship/thread/ThreadPool.h"
+
+// Neither of these touch os.h (they only pull in mbi.h/types.h), so they're safe outside the
+// OS_H guard above - this is the same real GBI a decomp uses to author display lists: Vtx, Gfx,
+// the gsSP*/gsDP* macros, and Mtx (the fixed-point matrix format libultra's gu*() helpers write).
+#include "fast/interpreter.h"
+#include "libultraship/libultra/gbi.h"
+#include "libultraship/libultra/gu.h"
 
 #include "HarnessWindow.h"
+
+// include/libultraship/libultra/gu.h declares guMtxIdent()/guPerspective() (and friends) but
+// nothing in this repo defines them - grepping the tree turns up zero .c/.cpp implementations.
+// They're meant to come from a real decomp's own libultra copy, the same way a decomp supplies
+// the microcode-generated display lists the context-test category below hand-authors. Since this
+// harness stands in for that decomp, it provides the minimal subset it actually calls here,
+// following the standard N64 SDK algorithm. Defined at global scope (not in the anonymous
+// namespace below) so they have the external "C" linkage the extern "C" declarations in gu.h
+// expect, with no linkage-mismatch ambiguity.
+//
+// A fixed-point Mtx here is MtxS (include/fast/types.h) - its intPart/fracPart layout is exactly
+// what Interpreter::GfxSpMatrix() decodes.
+extern "C" void guMtxIdentF(float mf[4][4]) {
+    std::memset(mf, 0, sizeof(float) * 16);
+    mf[0][0] = mf[1][1] = mf[2][2] = mf[3][3] = 1.0f;
+}
+
+extern "C" void guMtxF2L(float mf[4][4], Mtx* m) {
+    for (int row = 0; row < 4; row++) {
+        for (int col = 0; col < 4; col++) {
+            const int32_t fixed = (int32_t)(mf[row][col] * 65536.0f);
+            m->intPart[row][col] = (uint16_t)((fixed >> 16) & 0xFFFF);
+            m->fracPart[row][col] = (uint16_t)(fixed & 0xFFFF);
+        }
+    }
+}
+
+extern "C" void guMtxIdent(Mtx* m) {
+    float mf[4][4];
+    guMtxIdentF(mf);
+    guMtxF2L(mf, m);
+}
+
+extern "C" void guPerspective(Mtx* m, uint16_t* perspNorm, float fovy, float aspect, float near, float far,
+                              float scale) {
+    (void)scale; // only affects the perspNorm normalization below, which this untextured list ignores
+    float mf[4][4];
+    guMtxIdentF(mf);
+
+    const float angle = fovy * 0.5f * (3.14159265358979323846f / 180.0f);
+    const float cot = std::cos(angle) / std::sin(angle);
+    mf[0][0] = cot / aspect;
+    mf[1][1] = cot;
+    mf[2][2] = (near + far) / (near - far);
+    mf[2][3] = -1.0f;
+    mf[3][2] = 2.0f * near * far / (near - far);
+    mf[3][3] = 0.0f;
+
+    if (perspNorm != nullptr) {
+        *perspNorm = 0xFFFF; // no texture sampling in this display list, so no correction needed
+    }
+
+    guMtxF2L(mf, m);
+}
 
 namespace {
 
@@ -61,7 +126,7 @@ void* sScreenBufferDRC = nullptr;
 // builds with the non-_HW_VERSION_1 (N64DD) value, so 4 is the only value that macro ever takes.
 constexpr uint8_t kControllerPortCount = 4;
 
-enum class Mode { Menu, BootLink, InputReadout, InputMapped, Audio, Gx2Renderer };
+enum class Mode { Menu, BootLink, InputReadout, InputMapped, Audio, Gx2Renderer, FullContext };
 
 struct MenuItem {
     const char* label;
@@ -74,6 +139,7 @@ constexpr MenuItem kMenuItems[] = {
     { "Input: ControlDeck Mapping", Mode::InputMapped },
     { "Audio: Manager Playback", Mode::Audio },
     { "Graphics: GX2 Renderer", Mode::Gx2Renderer },
+    { "Graphics: Context + Display List", Mode::FullContext },
 };
 constexpr int kMenuItemCount = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 
@@ -485,7 +551,7 @@ void RenderInputReadout() {
 //
 // ControlDeck's mapping objects dereference mControlDeck->GamepadGameInputBlocked(), which
 // needs a live Window+Gui - see HarnessWindow.h for why a stub Window is enough here without
-// pulling in the OTR/ResourceManager machinery Stage 4 (full Context) would need.
+// pulling in the OTR/ResourceManager machinery a full Context would need.
 struct ControlDeckTestState {
     std::shared_ptr<Ship::Config> config;
     std::shared_ptr<Ship::ConsoleVariable> consoleVariable;
@@ -718,7 +784,7 @@ void PumpAudioTest(AudioTestState& state) {
 
 // --- graphics: GX2 renderer ---------------------------------------------------------------
 //
-// Unlike Stages 0-2, this drives Fast::GfxRenderingAPIGX2 directly instead of talking to the
+// Unlike the categories above, this drives Fast::GfxRenderingAPIGX2 directly instead of talking to the
 // raw Wii U SDK, on purpose: that's the layer a real N64 decomp actually calls (through the F3D
 // microcode interpreter), so it's the layer worth de-risking before one gets ported here. There
 // is no display list here, so shader IDs are hand-encoded the same way gfx_cc_get_features()
@@ -1036,6 +1102,288 @@ void PumpAndRenderGx2Test(Gx2TestState& state, const std::string& resultsPath, i
     }
 }
 
+// --- graphics: Context + display list through the F3D interpreter ------------------------
+//
+// Mapping (issue #14's ControlDeck-mapping category above) and audio (the Audio manager
+// category above) already prove libultraship's own abstractions work on Wii U, so per issue #5
+// what's left is the one layer nothing has touched yet: a real Context booting against an
+// archive, and a hand-authored Gfx display list running through Fast::Interpreter into
+// GfxRenderingAPIGX2 - the same path a decomp's own display lists take, as opposed to the GX2
+// renderer category's direct GfxRenderingAPIGX2 calls above with hand-encoded shader IDs.
+//
+// The Context here is deliberately hand-assembled with just a ResourceManager - not
+// Context::CreateDefaultInstance(), which would also pull in Window/Audio/ControlDeck that are
+// already covered above - via the lower-level Context::CreateInstance(name, shortName,
+// components) overload from Context.h's docs.
+//
+// ArchiveManager::Init() (see ArchiveManager::AddArchive()) treats any archive path with no file
+// extension as a FolderArchive root, so a bare loose-file directory is enough to satisfy
+// Context.cpp's ThrowMissingOTR gate - no .o2r/.otr build step needed for this stage. The
+// harness creates that directory and its one marker file itself at startup rather than shipping
+// it as packaged content, so this test is fully self-contained.
+
+std::string ContextFixtureDir(const std::string& harnessDir) {
+    return harnessDir + "/context-assets";
+}
+
+bool WriteContextFixture(const std::string& dir) {
+    mkdir(dir.c_str(), 0777); // ignore EEXIST - only failure that matters is the write below
+    const std::string markerPath = dir + "/harness_marker.txt";
+    FILE* f = std::fopen(markerPath.c_str(), "w");
+    if (f == nullptr) {
+        return false;
+    }
+    std::fprintf(f, "lus-harness context-test fixture - a loose file for FolderArchive to index.\n");
+    std::fclose(f);
+    return true;
+}
+
+struct ContextTestState {
+    std::shared_ptr<Ship::Config> config;
+    std::shared_ptr<Ship::ConsoleVariable> consoleVariable;
+    std::shared_ptr<Ship::ThreadPool> threadPool;
+    std::shared_ptr<Ship::ResourceManager> resourceManager;
+    std::shared_ptr<Ship::Context> context;
+
+    bool contextBootFailed = false;
+    bool archiveInitialized = false;
+    bool fixtureFileResolved = false;
+    // Expected true: this fixture deliberately carries no font resource, so Fast3dGui's
+    // OTR-backed font path (out of scope for this stage - see #5's open question) should fail to
+    // resolve cleanly rather than hang or crash. Constructing a full Gui to test that path for
+    // real is follow-up work, not part of tonight's run.
+    bool fontProbeAbsentAsExpected = false;
+
+    // Leaked deliberately, same rationale as Gx2TestState above: GfxWindowBackendWiiU /
+    // GfxRenderingAPIGX2 own the GX2 context and scan buffers for the rest of the process's
+    // life once constructed, and this category is a one-way trip for the same reason the GX2
+    // renderer category above is.
+    Fast::GfxWindowBackendWiiU* window = nullptr;
+    Fast::GfxRenderingAPIGX2* api = nullptr;
+    Fast::Interpreter* interpreter = nullptr;
+    bool imguiReady = false;
+
+    uint32_t frameCount = 0;
+};
+
+// A single hand-authored display list: the same shape of Gfx[] a real N64 decomp's game code
+// would build (SPMatrix/SPViewport/SPVertex/SP1Triangle via the real gsSP*/gsDP* GBI macros),
+// run through Fast::Interpreter::Run() the same way the interpreter runs a decomp's own display
+// lists - not called directly against GfxRenderingAPIGX2 the way the GX2 renderer category's
+// cube/quad above are.
+// Vertex colors only (no lighting, no texture) - the smallest list that still exercises
+// SPMatrix, SPVertex and SP1Triangle through the real interpreter path end to end.
+//
+// sContextProjMtx/sContextModelViewMtx/sContextViewport/sContextVerts are filled at runtime (by
+// guPerspective()/guMtxIdent() and by hand below) before the first Run() call - only their
+// addresses need to be fixed at static-init time, which is what the display list actually
+// embeds, exactly like a real decomp's static Gfx arrays referencing separate Mtx globals.
+Mtx sContextProjMtx;
+Mtx sContextModelViewMtx;
+Vp sContextViewport;
+Vtx sContextVerts[3];
+
+const Gfx sContextDisplayList[] = {
+    gsSPMatrix(&sContextProjMtx, G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH),
+    gsSPMatrix(&sContextModelViewMtx, G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH),
+    gsSPViewport(&sContextViewport),
+    gsSPClearGeometryMode(0xFFFFFFFF),
+    gsSPSetGeometryMode(G_SHADE | G_SHADING_SMOOTH | G_ZBUFFER),
+    gsDPSetCombineMode(G_CC_SHADE, G_CC_SHADE),
+    gsDPSetRenderMode(G_RM_AA_ZB_OPA_SURF, G_RM_AA_ZB_OPA_SURF2),
+    gsSPVertex(&sContextVerts[0], 3, 0),
+    gsSP1Triangle(0, 1, 2, 0),
+    gsSPEndDisplayList(),
+};
+
+void SetContextVertex(Vtx& vtx, int16_t x, int16_t y, int16_t z, uint8_t r, uint8_t g, uint8_t b) {
+    vtx.v.ob[0] = x;
+    vtx.v.ob[1] = y;
+    vtx.v.ob[2] = z;
+    vtx.v.flag = 0;
+    vtx.v.tc[0] = 0;
+    vtx.v.tc[1] = 0;
+    vtx.v.cn[0] = r;
+    vtx.v.cn[1] = g;
+    vtx.v.cn[2] = b;
+    vtx.v.cn[3] = 255;
+}
+
+// Boots the Context/ResourceManager/ArchiveManager half of the stage. Safe to call every time
+// the menu is entered - ResourceManager::Init()/Context::CreateInstance() are only ever run
+// once, on the first entry (mirrors EnsureControlDeckTest()'s guard above).
+void EnsureContextTest(ContextTestState& state, const std::string& harnessDir) {
+    if (state.context != nullptr || state.contextBootFailed) {
+        return;
+    }
+
+    const std::string fixtureDir = ContextFixtureDir(harnessDir);
+    if (!WriteContextFixture(fixtureDir)) {
+        WHBLogPrint("Context test: failed to write the FolderArchive fixture (no SD card?)");
+        state.contextBootFailed = true;
+        return;
+    }
+
+    state.config = std::make_shared<Ship::Config>(harnessDir + "/context-config.json");
+    state.consoleVariable = std::make_shared<Ship::ConsoleVariable>(state.config);
+    state.threadPool = std::make_shared<Ship::ThreadPool>(1);
+    state.resourceManager = std::make_shared<Ship::ResourceManager>(state.threadPool);
+
+    try {
+        state.resourceManager->Init({ { "archivePaths", std::vector<std::string>{ fixtureDir } } });
+    } catch (const std::exception& e) {
+        WHBLogPrintf("Context test: ResourceManager::Init threw: %s", e.what());
+        state.contextBootFailed = true;
+        return;
+    }
+
+    state.archiveInitialized = state.resourceManager->GetArchiveManager()->IsInitialized();
+    if (!state.archiveInitialized) {
+        WHBLogPrint("Context test: ArchiveManager failed to initialize against the fixture");
+        state.contextBootFailed = true;
+        return;
+    }
+
+    // Confirm the loose file is actually resolvable through the ArchiveManager, not just that
+    // IsInitialized() went true - that's the real pass condition #5 asks this stage to prove.
+    state.fixtureFileResolved = state.resourceManager->GetArchiveManager()->HasFile("harness_marker.txt");
+
+    // This fixture never provides a font resource on purpose (see the comment on
+    // fontProbeAbsentAsExpected above) - a miss here is the expected, clean-failure outcome.
+    state.fontProbeAbsentAsExpected = !state.resourceManager->GetArchiveManager()->HasFile("textures/font.otr");
+
+    // The lower-level overload (Context.h): adds each component and calls Init() on it in order.
+    // ResourceManager::Init() above already ran, and Component::Init() is a no-op past the first
+    // call, so this doesn't redo the archive work - it just attaches the already-booted
+    // ResourceManager as a real Context child.
+    state.context =
+        Ship::Context::CreateInstance("lus-harness-context", "lus-harness-context", { state.resourceManager });
+
+    WHBLogPrintf("Context test: Context boot OK (archive: %s, fixture file: %s, font probe: %s)",
+                 state.archiveInitialized ? "OK" : "FAILED", state.fixtureFileResolved ? "OK" : "FAILED",
+                 state.fontProbeAbsentAsExpected ? "absent as expected" : "unexpectedly present");
+}
+
+// OSScreen fallback shown only when EnsureContextTest() fails (no SD card, or the archive/
+// Context boot itself failed) - the success path never reaches this, since a successful boot
+// immediately hands the screen to GX2 (see the one-way rationale on ContextTestState above).
+void RenderContextTestStatus(const ContextTestState& state) {
+    int row = 0;
+    PrintBoth(row++, "libultraship Wii U harness");
+    PrintBoth(row++, "graphics: context + display list");
+    PrintBoth(row++, "");
+    if (!state.context) {
+        PrintBoth(row++, "requires an SD card (Config/fixture need a writable path).");
+    } else {
+        PrintBoth(row++, "Context/ArchiveManager boot FAILED - see WHBLogUdp / results.txt.");
+    }
+    PrintBoth(row++, "");
+    PrintBoth(row++, "Press B to return to menu. Press HOME to exit.");
+}
+
+// Brings up the same GfxWindowBackendWiiU + GfxRenderingAPIGX2 pair the GX2 renderer category
+// above uses, but hands frames to a real Fast::Interpreter instead of calling the API directly.
+// One-way, like that category: OSScreen and GX2 can't share the display, so B exits the harness
+// from here instead of returning to the menu.
+void StartContextGraphicsTest(ContextTestState& state) {
+    WHBLogPrint("Context test: bringing up GfxWindowBackendWiiU + GfxRenderingAPIGX2 + Interpreter");
+
+    state.window = new Fast::GfxWindowBackendWiiU(nullptr);
+    state.api = new Fast::GfxRenderingAPIGX2();
+    state.interpreter = new Fast::Interpreter();
+
+    // Interpreter::Init() calls wapi->Init()/rapi->Init() itself (unlike the GX2 renderer
+    // category above, which calls them directly) - it owns the window/renderer bring-up once
+    // handed to it.
+    state.interpreter->Init(state.window, state.api, "lus-harness-context", true, WIIU_DEFAULT_FB_WIDTH,
+                            WIIU_DEFAULT_FB_HEIGHT, 0, 0, state.consoleVariable, state.resourceManager);
+
+    // Standard N64 SDK default viewport for a 320x240 native resolution (SCREEN_WIDTH/
+    // SCREEN_HEIGHT from include/fast/interpreter.h): half-width/height in 2-bit-fraction fixed
+    // point, max Z range, no translation.
+    for (int i = 0; i < 3; i++) {
+        sContextViewport.vp.vscale[i] = (i == 0) ? (SCREEN_WIDTH / 2) * 4 : (i == 1) ? (SCREEN_HEIGHT / 2) * 4 : G_MAXZ;
+        sContextViewport.vp.vtrans[i] = (i == 2) ? G_MAXZ : (i == 0) ? (SCREEN_WIDTH / 2) * 4 : (SCREEN_HEIGHT / 2) * 4;
+    }
+    sContextViewport.vp.vscale[3] = 0;
+    sContextViewport.vp.vtrans[3] = 0;
+
+    guMtxIdent(&sContextModelViewMtx);
+    uint16_t perspNorm = 0;
+    guPerspective(&sContextProjMtx, &perspNorm, 60.0f, (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 10.0f, 1000.0f, 1.0f);
+
+    // A simple centered triangle, one primary color per vertex - object-space coordinates chosen
+    // to land comfortably inside guPerspective()'s 10..1000 near/far range with an identity
+    // modelview, so no separate camera transform is needed for this minimal a scene.
+    SetContextVertex(sContextVerts[0], 0, 60, -300, 255, 40, 40);
+    SetContextVertex(sContextVerts[1], -70, -60, -300, 40, 255, 40);
+    SetContextVertex(sContextVerts[2], 70, -60, -300, 40, 40, 255);
+
+    ImGui::CreateContext();
+    state.imguiReady = ImGui_ImplGX2_Init();
+    if (!state.imguiReady) {
+        WHBLogPrint("Context test: ImGui_ImplGX2_Init FAILED (continuing without the overlay)");
+    }
+
+    WHBLogPrint("Context test: graphics init OK");
+}
+
+void StopContextGraphicsTest(ContextTestState& state) {
+    if (state.imguiReady) {
+        ImGui_ImplGX2_Shutdown();
+        ImGui::DestroyContext();
+    }
+    // state.window / state.api / state.interpreter are intentionally not deleted - see the
+    // comment on ContextTestState.
+}
+
+void PumpAndRenderContextTest(ContextTestState& state, const std::string& resultsPath,
+                              int& periodicResultsCounter) {
+    state.interpreter->HandleWindowEvents();
+    state.frameCount++;
+
+    state.interpreter->StartFrame();
+    // Non-const cast: Interpreter::Run() takes Gfx* to match how a decomp hands it a mutable
+    // display list pointer (branches/DMA rewrite it in place); this harness's list never
+    // mutates itself, so aliasing the const array here is safe.
+    state.interpreter->Run(const_cast<Gfx*>(sContextDisplayList), {});
+
+    if (state.imguiReady) {
+        ImGui_ImplGX2_NewFrame();
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2((float)WIIU_DEFAULT_FB_WIDTH, (float)WIIU_DEFAULT_FB_HEIGHT);
+        io.DeltaTime = std::max(frametime / 1000000.0f, 1.0f / 1000.0f);
+        ImGui::NewFrame();
+        ImGui::Begin("libultraship Wii U harness - Context + Display List");
+        ImGui::Text("frame: %u", state.frameCount);
+        ImGui::Text("archive init: %s", state.archiveInitialized ? "OK" : "FAILED");
+        ImGui::Text("fixture file resolved: %s", state.fixtureFileResolved ? "OK" : "FAILED");
+        ImGui::Text("font probe (expect absent): %s", state.fontProbeAbsentAsExpected ? "OK" : "UNEXPECTED");
+        ImGui::Text("triangle drawn via Fast::Interpreter::Run(), not direct API calls");
+        ImGui::Text("press B to exit (no return to menu once GX2 has taken the screen)");
+        ImGui::End();
+        ImGui::Render();
+        ImGui_ImplGX2_RenderDrawData(ImGui::GetDrawData());
+    }
+
+    state.interpreter->EndFrame();
+
+    if (!resultsPath.empty() && periodicResultsCounter-- <= 0) {
+        FILE* f = std::fopen(resultsPath.c_str(), "w");
+        if (f != nullptr) {
+            std::fprintf(f, "libultraship Wii U harness - graphics: context + display list\n");
+            std::fprintf(f, "frame: %u\n", state.frameCount);
+            std::fprintf(f, "archive init: %s\n", state.archiveInitialized ? "OK" : "FAILED");
+            std::fprintf(f, "fixture file resolved: %s\n", state.fixtureFileResolved ? "OK" : "FAILED");
+            std::fprintf(f, "font probe (expect absent): %s\n",
+                         state.fontProbeAbsentAsExpected ? "OK" : "UNEXPECTED");
+            std::fprintf(f, "imgui overlay: %s\n", state.imguiReady ? "OK" : "FAILED");
+            std::fclose(f);
+        }
+        periodicResultsCounter = 30; // roughly once a second at 60fps-ish
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1074,6 +1422,7 @@ int main(int argc, char** argv) {
     AudioTestState audioTestState;
     ControlDeckTestState controlDeckTestState;
     Gx2TestState gx2TestState;
+    ContextTestState contextTestState;
     bool quitRequested = false;
 
     while (WHBProcIsRunning() && !quitRequested) {
@@ -1099,6 +1448,11 @@ int main(int argc, char** argv) {
                     StartAudioTest(audioTestState, harnessDir);
                 } else if (mode == Mode::Gx2Renderer) {
                     StartGx2Test(gx2TestState);
+                } else if (mode == Mode::FullContext && sdWriteOk) {
+                    EnsureContextTest(contextTestState, harnessDir);
+                    if (!contextTestState.contextBootFailed) {
+                        StartContextGraphicsTest(contextTestState);
+                    }
                 }
             }
         } else if (mode == Mode::Gx2Renderer) {
@@ -1108,6 +1462,16 @@ int main(int argc, char** argv) {
                 StopGx2Test(gx2TestState);
                 quitRequested = true;
                 continue; // skip PumpAndRenderGx2Test below - ImGui was just torn down
+            }
+        } else if (mode == Mode::FullContext && contextTestState.window != nullptr) {
+            // Same one-way rationale as Gx2Renderer above - GX2 has taken the screen. Only true
+            // once graphics actually came up; a failed EnsureContextTest() (no SD card, or the
+            // archive/Context boot itself failed) leaves window null and falls through to the
+            // generic B-returns-to-menu handling below instead, since OSScreen never left.
+            if (pressed & Ship::WiiU::WIIU_BUTTON_B) {
+                StopContextGraphicsTest(contextTestState);
+                quitRequested = true;
+                continue; // skip PumpAndRenderContextTest below - ImGui was just torn down
             }
         } else if (pressed & Ship::WiiU::WIIU_BUTTON_B) {
             if (mode == Mode::Audio) {
@@ -1121,6 +1485,13 @@ int main(int argc, char** argv) {
         if (mode == Mode::Gx2Renderer) {
             // Own frame loop: OSScreen must not touch the screen while GX2 owns it.
             PumpAndRenderGx2Test(gx2TestState, resultsPath, periodicResultsCounter);
+            continue;
+        }
+        if (mode == Mode::FullContext && contextTestState.window != nullptr) {
+            // Same reasoning as Gx2Renderer above - only once graphics actually came up
+            // (EnsureContextTest() may have failed and left window null, in which case the
+            // Mode::FullContext switch case below shows the OSScreen failure message instead).
+            PumpAndRenderContextTest(contextTestState, resultsPath, periodicResultsCounter);
             continue;
         }
 
@@ -1159,6 +1530,9 @@ int main(int argc, char** argv) {
                 break;
             case Mode::Gx2Renderer:
                 break; // handled above, before OSScreen touches the buffers
+            case Mode::FullContext:
+                RenderContextTestStatus(contextTestState);
+                break;
         }
 
         DCFlushRange(sScreenBufferTV, bufferSizeTV);

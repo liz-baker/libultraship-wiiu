@@ -6,7 +6,7 @@
 // mControlDeck->GamepadGameInputBlocked(), which dereferences GetWindow()->GetGui(). That means
 // driving the real mapping layer needs *some* live Window+Gui, but a fully real, Init()'d Gui
 // requires a ResourceManager (OTR archives) to build its icon fonts and default windows - the
-// same wall that makes a full Context (Stage 4) more than this harness wants to take on.
+// same wall that makes a full Context more than this input category wants to take on.
 //
 // The way out: Gui::GetMenuOrMenubarVisible() (the only thing GamepadGameInputBlocked() actually
 // calls) is safe to call on a Gui that has never had Init() run - both mMenuBar and mMenu are
