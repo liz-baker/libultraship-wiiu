@@ -56,6 +56,35 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr int32_t kRingSamples = 8192;
 constexpr int32_t kHighBufferedThreshold = (kRingSamples * 9) / 10;
 
+// Which channel(s) currently hear the sweep. WiiUAudioPlayer only ever wires two AX
+// voices to the front L/R bus (see its class doc — AX can drive 5.1, but the surround
+// path isn't wired up here), so Both/Left/Right is the whole space worth isolating.
+enum class ChannelMode { Both, Left, Right };
+
+const char* ChannelModeName(ChannelMode mode) {
+    switch (mode) {
+        case ChannelMode::Both:
+            return "BOTH";
+        case ChannelMode::Left:
+            return "LEFT only";
+        case ChannelMode::Right:
+            return "RIGHT only";
+    }
+    return "";
+}
+
+ChannelMode NextChannelMode(ChannelMode mode) {
+    switch (mode) {
+        case ChannelMode::Both:
+            return ChannelMode::Left;
+        case ChannelMode::Left:
+            return ChannelMode::Right;
+        case ChannelMode::Right:
+            return ChannelMode::Both;
+    }
+    return ChannelMode::Both;
+}
+
 struct AudioTestState {
     std::unique_ptr<Ship::WiiUAudioPlayer> player;
     double phaseL = 0.0;
@@ -65,6 +94,7 @@ struct AudioTestState {
     int32_t minBuffered = INT32_MAX;
     int32_t maxBuffered = 0;
     bool highBufferedFlag = false;
+    ChannelMode channelMode = ChannelMode::Both;
 };
 
 void PrintLine(OSScreenID screen, int row, const std::string& text) {
@@ -184,6 +214,7 @@ void WriteAudioResults(const std::string& resultsPath, const AudioTestState& sta
         std::fclose(f);
         return;
     }
+    std::fprintf(f, "channel: %s\n", ChannelModeName(state.channelMode));
     std::fprintf(f, "buffered: %d (min %d / max %d)\n", state.player->Buffered(), state.minBuffered, state.maxBuffered);
     std::fprintf(f, "underruns: %u\n", state.underrunCount);
     std::fprintf(f, "high buffered (near ring capacity): %s\n", state.highBufferedFlag ? "yes" : "no");
@@ -249,6 +280,9 @@ void RenderAudioTest(const AudioTestState& state) {
     if (!state.player) {
         PrintBoth(row++, "audio player failed to initialize");
     } else {
+        PrintBoth(row++, std::string("channel: ") + ChannelModeName(state.channelMode) + " (X to cycle)");
+        PrintBoth(row++, "");
+
         char buf[64];
         std::snprintf(buf, sizeof(buf), "buffered: %d (min %d / max %d)", state.player->Buffered(), state.minBuffered,
                       state.maxBuffered);
@@ -285,6 +319,7 @@ void StartAudioTest(AudioTestState& state) {
     state.minBuffered = INT32_MAX;
     state.maxBuffered = 0;
     state.highBufferedFlag = false;
+    state.channelMode = ChannelMode::Both;
 }
 
 void StopAudioTest(AudioTestState& state) {
@@ -321,8 +356,14 @@ void PumpAudioTest(AudioTestState& state) {
                 state.phaseR -= 2.0 * kPi;
             }
 
-            chunk[i * 2 + 0] = static_cast<int16_t>(std::sin(state.phaseL) * kAmplitude);
-            chunk[i * 2 + 1] = static_cast<int16_t>(std::sin(state.phaseR) * kAmplitude);
+            // Phases keep advancing regardless of channelMode, so muting/unmuting a
+            // channel never introduces a phase discontinuity (and thus a spurious click).
+            chunk[i * 2 + 0] = (state.channelMode == ChannelMode::Right)
+                                   ? int16_t(0)
+                                   : static_cast<int16_t>(std::sin(state.phaseL) * kAmplitude);
+            chunk[i * 2 + 1] = (state.channelMode == ChannelMode::Left)
+                                   ? int16_t(0)
+                                   : static_cast<int16_t>(std::sin(state.phaseR) * kAmplitude);
             state.sampleIndex++;
         }
         player.Play(reinterpret_cast<const uint8_t*>(chunk.data()), chunk.size() * sizeof(int16_t));
@@ -403,6 +444,8 @@ int main(int argc, char** argv) {
                 StopAudioTest(audioTestState);
             }
             mode = Mode::Menu;
+        } else if (mode == Mode::Audio && (pressed & Ship::WiiU::WIIU_BUTTON_X)) {
+            audioTestState.channelMode = NextChannelMode(audioTestState.channelMode);
         }
 
         OSScreenClearBufferEx(SCREEN_TV, 0);

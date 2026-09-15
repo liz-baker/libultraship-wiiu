@@ -64,9 +64,12 @@ phases land.
     `AudioSettings`) and feeds it a continuous, phase-continuous sweep
     (220–880 Hz) with the right channel offset from the left by a fixed pitch
     ratio, so a wrap/underrun click stands out against the smooth pitch change
-    and a channel swap is audible throughout. `Buffered()` is tracked for
-    underrun count, min/max, and a near-ring-capacity flag, surfaced live on
-    screen and in `results.txt` rather than relying on listening alone.
+    and a channel swap is audible throughout. `X` cycles which channel(s) are
+    audible (Both → Left → Right → Both) to isolate one side at a time —
+    both phase accumulators keep advancing while muted so toggling never
+    introduces its own click. `Buffered()` is tracked for underrun count,
+    min/max, and a near-ring-capacity flag, surfaced live on screen and in
+    `results.txt` rather than relying on listening alone.
   - [ ] **Stage 3 — GX2 renderer.** Tear down OSScreen (conflicts with GX2 —
     switch logging to `WHBLogUdp`/results file), bring up
     `GfxWindowBackendWiiU` + `GfxRenderingAPIGX2`, cycling clear color, then a

@@ -176,11 +176,16 @@ is downmixed to the front pair rather than driving AX's surround path.
      pitch ratio (a perfect fourth). A steady single tone can't reveal a
      wrap-boundary click against its own unchanging pitch, and identical L/R
      tones can't reveal a channel swap; the sweep and the L/R offset make both
-     audible. `Buffered()` is tracked for underrun count (buffered hits 0),
-     min/max over the session, and a near-ring-capacity flag (approaching the
-     internal ring size risks the writer lapping the read head) — all
-     surfaced live on screen and in `results.txt`, so a dropout is confirmed
-     by the display rather than by ear alone.
+     audible. `X` cycles Both → Left → Right → Both to isolate one channel at
+     a time — the muted channel's phase accumulator keeps advancing while
+     silent, so toggling never introduces a click of its own (only stereo is
+     wired up, per `WiiUAudioPlayer`'s class doc, so Both/Left/Right is the
+     whole space worth isolating; AX itself can drive 5.1, but that path
+     isn't implemented here). `Buffered()` is tracked for underrun count
+     (buffered hits 0), min/max over the session, and a near-ring-capacity
+     flag (approaching the internal ring size risks the writer lapping the
+     read head) — all surfaced live on screen and in `results.txt`, so a
+     dropout is confirmed by the display rather than by ear alone.
    - **Stage 3 — GX2 renderer** (open): tear down OSScreen (it and GX2 can't
      both own the display — switch output to `WHBLogUdp` port 4405 and/or the
      results file), bring up `GfxWindowBackendWiiU(nullptr)` +
