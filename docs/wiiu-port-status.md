@@ -141,32 +141,46 @@ is downmixed to the front pair rather than driving AX's surround path.
    full rationale. `build-wiiu` publishes the `.wuhb` and the static lib as a
    GitHub Release on every push to `main` (prerelease, tagged
    `wiiu-main-<sha>`) and as a real release on `v*` tags, so hardware testing
-   doesn't require a local devkitPro install.
+   doesn't require a local devkitPro install. The harness's main screen is a
+   D-Pad/A text menu that picks which stage to test — `B` returns to it from
+   any stage — rather than cycling through them with `+`, so the list can
+   keep growing without becoming tedious to navigate.
 
-   - **Stage 0 — boot & link** (done, [PR #7](https://github.com/liz-baker/libultraship-wiiu/pull/7)):
-     OSScreen console (chosen over GX2 for the early stages specifically
-     because it has no dependency on the renderer under test), prints
-     compiler/build info and MEM2 heap free bytes, writes
+   - **Stage 0 — boot & link** (done, [PR #7](https://github.com/liz-baker/libultraship-wiiu/pull/7);
+     confirmed on hardware): OSScreen console (chosen over GX2 for the early
+     stages specifically because it has no dependency on the renderer under
+     test), prints compiler/build info and MEM2 heap free bytes, writes
      `sd:/wiiu/apps/lus-harness/results.txt`. Links `libultraship` with
      `-Wl,--whole-archive` so the whole static archive gets symbol-resolved,
      not just what Stage 0 itself calls — the first thing in this repo to
      actually *link* an executable against `libultraship.a`, closing a gap
      the static-lib-only CI build couldn't catch: an undefined Wii U symbol.
-   - **Stage 1 — normalized input readout** (harness code landed,
-     [PR #9](https://github.com/liz-baker/libultraship-wiiu/pull/9); not yet
-     run on real hardware): live-prints, per connected device,
+   - **Stage 1 — normalized input readout** (done,
+     [PR #9](https://github.com/liz-baker/libultraship-wiiu/pull/9);
+     confirmed on hardware for the GamePad — Wii Remote, Nunchuk, Classic, and
+     Pro Controller are still untested): live-prints, per connected device,
      `GetDeviceName()`, the decoded `GetButtonsHeld()` mask (names, not hex),
      and all four `GetAxisValue()` axes from
-     `include/ship/port/wiiu/WiiUInput.h`, cycling GamePad, Wii Remote,
-     Nunchuk, Classic, and Pro Controller. Lives alongside Stage 0 in the same
-     binary — the GamePad's `+` button toggles between the two modes. Directly
-     validates the button tables in `src/ship/port/wiiu/WiiUInput.cpp`, which
-     compiled but were never checked against real hardware.
-   - **Stage 2 — AX audio** (open): instantiate `WiiUAudioPlayer` directly —
-     it only takes an `AudioSettings` struct at construction, no `Context`
-     dependency — feed it a generated 440 Hz sine, and watch `Buffered()`
-     settle near `DesiredBuffered` instead of drifting to 0 (underrun) or the
-     ring size (overrun); run it a few minutes to exercise ring-buffer wrap.
+     `include/ship/port/wiiu/WiiUInput.h`, for GamePad, Wii Remote, Nunchuk,
+     Classic, and Pro Controller. Directly validates the button tables in
+     `src/ship/port/wiiu/WiiUInput.cpp`, which compiled but were never checked
+     against real hardware. (Unrelated observation from the hardware run: the
+     screen tints reddish under the system HOME menu overlay — expected
+     `OSScreen`-vs-system-overlay behavior, not a port bug, and moot once
+     Stage 3 replaces `OSScreen` with GX2.)
+   - **Stage 2 — AX audio** (harness code landed; not yet run on real
+     hardware): instantiates `WiiUAudioPlayer` directly — it only takes an
+     `AudioSettings` struct at construction, no `Context` dependency — and
+     feeds it a continuous, phase-continuous 220–880 Hz sweep rather than a
+     steady tone, with the right channel offset from the left by a fixed
+     pitch ratio (a perfect fourth). A steady single tone can't reveal a
+     wrap-boundary click against its own unchanging pitch, and identical L/R
+     tones can't reveal a channel swap; the sweep and the L/R offset make both
+     audible. `Buffered()` is tracked for underrun count (buffered hits 0),
+     min/max over the session, and a near-ring-capacity flag (approaching the
+     internal ring size risks the writer lapping the read head) — all
+     surfaced live on screen and in `results.txt`, so a dropout is confirmed
+     by the display rather than by ear alone.
    - **Stage 3 — GX2 renderer** (open): tear down OSScreen (it and GX2 can't
      both own the display — switch output to `WHBLogUdp` port 4405 and/or the
      results file), bring up `GfxWindowBackendWiiU(nullptr)` +
