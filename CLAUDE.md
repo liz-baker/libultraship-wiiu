@@ -40,7 +40,10 @@ phases land.
   The port is compile-clean end to end but **nothing in it has ever executed**
   on a console or emulator. `tools/wiiu-harness/` builds a loadable `.wuhb`
   (target: Aroma, plus `wiiload` for iteration) in 5 stages, ordered so each
-  one isolates a failure before the next stage adds complexity. Full design,
+  one isolates a failure before the next stage adds complexity. The harness's
+  main screen is now a D-Pad/A text menu that picks which stage to test (`B`
+  returns to it from any stage) rather than cycling through them with `+`, so
+  the list can keep growing without becoming tedious to navigate. Full design,
   API references, and packaging notes are in the issue; short version:
   - [x] **Stage 0 — boot & link.** [PR #7](https://github.com/liz-baker/libultraship-wiiu/pull/7).
     OSScreen console, toolchain/heap info, SD write test. Links `libultraship`
@@ -49,15 +52,21 @@ phases land.
     compiled it. Also wired `build-wiiu` to publish the `.wuhb` and the static
     lib as GitHub Releases (prerelease per commit to `main`, real release on
     `v*` tags) so hardware testing doesn't need a local devkitPro install.
-  - [ ] **Stage 1 — normalized input readout.** [PR #9](https://github.com/liz-baker/libultraship-wiiu/pull/9)
-    (harness code landed, not yet run on hardware). Highest-value remaining
-    stage: live-prints `GetDeviceName()`/`GetButtonsHeld()`/`GetAxisValue()`
-    from `WiiUInput.h` for GamePad, Wii Remote, Nunchuk, Classic, and Pro
-    Controller. Validates the button tables in `WiiUInput.cpp`, which have
-    compiled but were never semantically checked against real hardware.
-  - [ ] **Stage 2 — AX audio.** Instantiate `WiiUAudioPlayer` standalone (no
-    `Context` needed — just an `AudioSettings`), play a generated 440 Hz sine,
-    watch `Buffered()` for underrun/overrun/ring-wrap.
+  - [x] **Stage 1 — normalized input readout.** [PR #9](https://github.com/liz-baker/libultraship-wiiu/pull/9).
+    Confirmed on hardware: GamePad button readout works cleanly via
+    `GetDeviceName()`/`GetButtonsHeld()`/`GetAxisValue()`. Wii Remote, Nunchuk,
+    Classic, and Pro Controller are still untested. (Unrelated observation from
+    the hardware run: the screen tints reddish under the system HOME menu
+    overlay — expected `OSScreen`-vs-system-overlay behavior, not a port bug,
+    and moot once Stage 3 replaces `OSScreen` with GX2.)
+  - [ ] **Stage 2 — AX audio** (harness code landed, not yet run on hardware).
+    Instantiates a standalone `WiiUAudioPlayer` (no `Context` needed — just an
+    `AudioSettings`) and feeds it a continuous, phase-continuous sweep
+    (220–880 Hz) with the right channel offset from the left by a fixed pitch
+    ratio, so a wrap/underrun click stands out against the smooth pitch change
+    and a channel swap is audible throughout. `Buffered()` is tracked for
+    underrun count, min/max, and a near-ring-capacity flag, surfaced live on
+    screen and in `results.txt` rather than relying on listening alone.
   - [ ] **Stage 3 — GX2 renderer.** Tear down OSScreen (conflicts with GX2 —
     switch logging to `WHBLogUdp`/results file), bring up
     `GfxWindowBackendWiiU` + `GfxRenderingAPIGX2`, cycling clear color, then a

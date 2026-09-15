@@ -1,6 +1,8 @@
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 #include <sys/stat.h>
@@ -15,6 +17,7 @@
 #include <whb/proc.h>
 #include <whb/sdcard.h>
 
+#include "ship/audio/AudioPlayer.h"
 #include "ship/port/wiiu/WiiUImpl.h"
 #include "ship/port/wiiu/WiiUInput.h"
 
@@ -23,7 +26,46 @@ namespace {
 void* sScreenBufferTV = nullptr;
 void* sScreenBufferDRC = nullptr;
 
-enum class Mode { BootLink, InputReadout };
+enum class Mode { Menu, BootLink, InputReadout, Audio };
+
+struct MenuItem {
+    const char* label;
+    Mode mode;
+};
+
+constexpr MenuItem kMenuItems[] = {
+    { "Stage 0: Boot & Link", Mode::BootLink },
+    { "Stage 1: Input Readout", Mode::InputReadout },
+    { "Stage 2: AX Audio", Mode::Audio },
+};
+constexpr int kMenuItemCount = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
+
+// AX audio test tone: a continuous, phase-continuous sweep so a wrap/underrun click
+// stands out against an otherwise-smooth pitch change, with the right channel offset
+// from the left by a fixed ratio so a channel swap is audible at every point in the
+// sweep (a single steady tone can't reveal either of those).
+constexpr double kSweepMinHz = 220.0;
+constexpr double kSweepMaxHz = 880.0;
+constexpr double kSweepPeriodSeconds = 4.0;
+constexpr double kRightChannelRatio = 1.25; // Perfect fourth above the left channel.
+constexpr int16_t kAmplitude = 8000;
+constexpr double kPi = 3.14159265358979323846;
+
+// Mirrors WiiUAudioPlayer's internal ring size (gRingSamples in WiiUAudioPlayer.cpp).
+// Buffered() approaching this means the writer is close to lapping the AX read head.
+constexpr int32_t kRingSamples = 8192;
+constexpr int32_t kHighBufferedThreshold = (kRingSamples * 9) / 10;
+
+struct AudioTestState {
+    std::unique_ptr<Ship::WiiUAudioPlayer> player;
+    double phaseL = 0.0;
+    double phaseR = 0.0;
+    uint64_t sampleIndex = 0;
+    uint32_t underrunCount = 0;
+    int32_t minBuffered = INT32_MAX;
+    int32_t maxBuffered = 0;
+    bool highBufferedFlag = false;
+};
 
 void PrintLine(OSScreenID screen, int row, const std::string& text) {
     OSScreenPutFontEx(screen, 0, row, text.c_str());
@@ -130,6 +172,36 @@ void WriteInputResults(const std::string& resultsPath) {
     std::fclose(f);
 }
 
+// Writes a snapshot of the AX audio test's buffering stats to results.txt.
+void WriteAudioResults(const std::string& resultsPath, const AudioTestState& state) {
+    FILE* f = std::fopen(resultsPath.c_str(), "w");
+    if (f == nullptr) {
+        return;
+    }
+    std::fprintf(f, "libultraship Wii U harness - Stage 2: AX audio\n");
+    if (!state.player) {
+        std::fprintf(f, "audio player failed to initialize\n");
+        std::fclose(f);
+        return;
+    }
+    std::fprintf(f, "buffered: %d (min %d / max %d)\n", state.player->Buffered(), state.minBuffered, state.maxBuffered);
+    std::fprintf(f, "underruns: %u\n", state.underrunCount);
+    std::fprintf(f, "high buffered (near ring capacity): %s\n", state.highBufferedFlag ? "yes" : "no");
+    std::fclose(f);
+}
+
+void RenderMenu(int cursor) {
+    int row = 0;
+    PrintBoth(row++, "libultraship Wii U harness");
+    PrintBoth(row++, "select a stage to test:");
+    PrintBoth(row++, "");
+    for (int i = 0; i < kMenuItemCount; i++) {
+        PrintBoth(row++, std::string(i == cursor ? "> " : "  ") + kMenuItems[i].label);
+    }
+    PrintBoth(row++, "");
+    PrintBoth(row++, "D-Pad Up/Down to move, A to select, HOME to exit.");
+}
+
 void RenderBootLink(const std::string& resultsPath, const std::string& heapLine, bool sdWriteOk) {
     int row = 0;
     PrintBoth(row++, "libultraship Wii U harness");
@@ -144,7 +216,7 @@ void RenderBootLink(const std::string& resultsPath, const std::string& heapLine,
     PrintBoth(row++, "");
     PrintBoth(row++, "libultraship.a linked OK (you are looking at proof)");
     PrintBoth(row++, "");
-    PrintBoth(row++, "Press + to switch mode. Press HOME to exit.");
+    PrintBoth(row++, "Press B to return to menu. Press HOME to exit.");
 }
 
 void RenderInputReadout() {
@@ -165,7 +237,110 @@ void RenderInputReadout() {
     }
 
     PrintBoth(row++, "");
-    PrintBoth(row++, "Press + to switch mode. Press HOME to exit.");
+    PrintBoth(row++, "Press B to return to menu. Press HOME to exit.");
+}
+
+void RenderAudioTest(const AudioTestState& state) {
+    int row = 0;
+    PrintBoth(row++, "libultraship Wii U harness");
+    PrintBoth(row++, "Stage 2: AX audio");
+    PrintBoth(row++, "");
+
+    if (!state.player) {
+        PrintBoth(row++, "audio player failed to initialize");
+    } else {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "buffered: %d (min %d / max %d)", state.player->Buffered(), state.minBuffered,
+                      state.maxBuffered);
+        PrintBoth(row++, buf);
+
+        std::snprintf(buf, sizeof(buf), "underruns: %u", state.underrunCount);
+        PrintBoth(row++, state.underrunCount > 0 ? (std::string("*** ") + buf + " ***") : std::string(buf));
+
+        if (state.highBufferedFlag) {
+            PrintBoth(row++, "*** buffered approached ring capacity ***");
+        }
+
+        PrintBoth(row++, "");
+        PrintBoth(row++, "listen for a smooth rising/falling tone.");
+        PrintBoth(row++, "left/right pitch should differ throughout.");
+        PrintBoth(row++, "any pop/click/dropout = underrun or wrap bug.");
+    }
+
+    PrintBoth(row++, "");
+    PrintBoth(row++, "Press B to return to menu. Press HOME to exit.");
+}
+
+void StartAudioTest(AudioTestState& state) {
+    Ship::AudioSettings settings;
+    state.player = std::make_unique<Ship::WiiUAudioPlayer>(settings);
+    if (!state.player->Init()) {
+        state.player.reset();
+        return;
+    }
+    state.phaseL = 0.0;
+    state.phaseR = 0.0;
+    state.sampleIndex = 0;
+    state.underrunCount = 0;
+    state.minBuffered = INT32_MAX;
+    state.maxBuffered = 0;
+    state.highBufferedFlag = false;
+}
+
+void StopAudioTest(AudioTestState& state) {
+    state.player.reset(); // ~WiiUAudioPlayer tears the AX voices and ring buffers back down.
+}
+
+// Feeds the ring buffer up to its desired-buffered target with fresh sweep samples, then
+// updates the buffering stats used by RenderAudioTest()/WriteAudioResults().
+void PumpAudioTest(AudioTestState& state) {
+    if (!state.player) {
+        return;
+    }
+    Ship::WiiUAudioPlayer& player = *state.player;
+    const int32_t sampleRate = player.GetSampleRate();
+    const int32_t sampleLength = player.GetSampleLength();
+    const int32_t desired = player.GetDesiredBuffered();
+
+    // Bounded so a stalled AX read head can't turn this into a busy-loop.
+    int guard = 16;
+    while (player.Buffered() < desired && guard-- > 0) {
+        std::vector<int16_t> chunk(static_cast<size_t>(sampleLength) * 2);
+        for (int32_t i = 0; i < sampleLength; i++) {
+            const double t = static_cast<double>(state.sampleIndex) / sampleRate;
+            const double freqL =
+                kSweepMinHz + (kSweepMaxHz - kSweepMinHz) * 0.5 * (1.0 - std::cos(2.0 * kPi * t / kSweepPeriodSeconds));
+            const double freqR = freqL * kRightChannelRatio;
+
+            state.phaseL += 2.0 * kPi * freqL / sampleRate;
+            state.phaseR += 2.0 * kPi * freqR / sampleRate;
+            if (state.phaseL > 2.0 * kPi) {
+                state.phaseL -= 2.0 * kPi;
+            }
+            if (state.phaseR > 2.0 * kPi) {
+                state.phaseR -= 2.0 * kPi;
+            }
+
+            chunk[i * 2 + 0] = static_cast<int16_t>(std::sin(state.phaseL) * kAmplitude);
+            chunk[i * 2 + 1] = static_cast<int16_t>(std::sin(state.phaseR) * kAmplitude);
+            state.sampleIndex++;
+        }
+        player.Play(reinterpret_cast<const uint8_t*>(chunk.data()), chunk.size() * sizeof(int16_t));
+    }
+
+    const int32_t buffered = player.Buffered();
+    if (buffered == 0) {
+        state.underrunCount++;
+    }
+    if (buffered < state.minBuffered) {
+        state.minBuffered = buffered;
+    }
+    if (buffered > state.maxBuffered) {
+        state.maxBuffered = buffered;
+    }
+    if (buffered > kHighBufferedThreshold) {
+        state.highBufferedFlag = true;
+    }
 }
 
 } // namespace
@@ -196,35 +371,63 @@ int main(int argc, char** argv) {
         WriteBootLinkResults(resultsPath, heapLine);
     }
 
-    Mode mode = Mode::BootLink;
+    Mode mode = Mode::Menu;
+    int menuCursor = 0;
     uint32_t prevGamePadHeld = 0;
-    int inputResultsCounter = 0;
+    int periodicResultsCounter = 0;
+    AudioTestState audioTestState;
 
     while (WHBProcIsRunning()) {
         Ship::WiiU::Update();
 
         const uint32_t gamePadHeld = Ship::WiiU::GetButtonsHeld(WIIU_DEVICE_GAMEPAD);
-        const bool plusPressed =
-            (gamePadHeld & Ship::WiiU::WIIU_BUTTON_PLUS) && !(prevGamePadHeld & Ship::WiiU::WIIU_BUTTON_PLUS);
+        const uint32_t pressed = gamePadHeld & ~prevGamePadHeld;
         prevGamePadHeld = gamePadHeld;
 
-        if (plusPressed) {
-            mode = mode == Mode::BootLink ? Mode::InputReadout : Mode::BootLink;
-            inputResultsCounter = 0;
+        if (mode == Mode::Menu) {
+            if (pressed & Ship::WiiU::WIIU_BUTTON_UP) {
+                menuCursor = (menuCursor - 1 + kMenuItemCount) % kMenuItemCount;
+            }
+            if (pressed & Ship::WiiU::WIIU_BUTTON_DOWN) {
+                menuCursor = (menuCursor + 1) % kMenuItemCount;
+            }
+            if (pressed & Ship::WiiU::WIIU_BUTTON_A) {
+                mode = kMenuItems[menuCursor].mode;
+                periodicResultsCounter = 0;
+                if (mode == Mode::Audio) {
+                    StartAudioTest(audioTestState);
+                }
+            }
+        } else if (pressed & Ship::WiiU::WIIU_BUTTON_B) {
+            if (mode == Mode::Audio) {
+                StopAudioTest(audioTestState);
+            }
+            mode = Mode::Menu;
         }
 
         OSScreenClearBufferEx(SCREEN_TV, 0);
         OSScreenClearBufferEx(SCREEN_DRC, 0);
 
         switch (mode) {
+            case Mode::Menu:
+                RenderMenu(menuCursor);
+                break;
             case Mode::BootLink:
                 RenderBootLink(resultsPath, heapLine, sdWriteOk);
                 break;
             case Mode::InputReadout:
                 RenderInputReadout();
-                if (sdWriteOk && inputResultsCounter-- <= 0) {
+                if (sdWriteOk && periodicResultsCounter-- <= 0) {
                     WriteInputResults(resultsPath);
-                    inputResultsCounter = 30; // roughly once a second at 33ms/frame
+                    periodicResultsCounter = 30; // roughly once a second at 33ms/frame
+                }
+                break;
+            case Mode::Audio:
+                PumpAudioTest(audioTestState);
+                RenderAudioTest(audioTestState);
+                if (sdWriteOk && periodicResultsCounter-- <= 0) {
+                    WriteAudioResults(resultsPath, audioTestState);
+                    periodicResultsCounter = 30; // roughly once a second at 33ms/frame
                 }
                 break;
         }
@@ -235,6 +438,10 @@ int main(int argc, char** argv) {
         OSScreenFlipBuffersEx(SCREEN_DRC);
 
         OSSleepTicks(OSMillisecondsToTicks(33));
+    }
+
+    if (audioTestState.player) {
+        StopAudioTest(audioTestState);
     }
 
     Ship::WiiU::Exit();
