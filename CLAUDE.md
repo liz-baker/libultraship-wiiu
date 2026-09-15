@@ -89,6 +89,13 @@ phases land.
     window on top using ImGui's built-in font (not `Fast3dGui`, which needs an
     OTR-backed font resource). Entering this stage is a one-way trip for the
     run — `B` exits the harness rather than returning to the OSScreen menu.
+    **Currently blocked on CI** by [issue #16](https://github.com/liz-baker/libultraship-wiiu/issues/16):
+    `GfxWindowBackendWiiU::Init()`/`HandleEvents()` are the first Wii U code
+    path to statically reference `Fast3dGui`'s Component-tree methods, which
+    is the first time `Ship::Part`'s construction becomes reachable under
+    `--gc-sections` — exposing that devkitPPC ships no `libatomic` for the
+    64-bit atomic `Part`'s id counter needs. Not a Stage 3-specific bug —
+    Stage 4 would hit the identical wall constructing a full `Context`.
   - [ ] **Stage 4 — full `Context` + mapping layer.** Drive a `ControlDeck`
     through `Context::CreateDefaultInstance(...)` to exercise
     `mapping/wiiu/` end to end (built-in defaults, rumble). Open question,
