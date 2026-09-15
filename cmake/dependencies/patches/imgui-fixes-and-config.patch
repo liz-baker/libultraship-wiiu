@@ -73,7 +73,7 @@ index f3a31c5c3c5e..2e6a1ad9d1f1 100644
 @@ -809,9 +809,6 @@ static void ImGui_ImplSDL3_UpdateGamepads()
          SDL_free(sdl_gamepads);
      }
-
+ 
 -    // FIXME: Technically feeding gamepad shouldn't depend on this now that they are regular inputs.
 -    if ((io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad) == 0)
 -        return;
@@ -100,7 +100,7 @@ index a1e29e849bc8..ee64116ff0cf 100644
  //---- ...Or use Dear ImGui's own very basic math operators.
 -//#define IMGUI_DEFINE_MATH_OPERATORS
 +#define IMGUI_DEFINE_MATH_OPERATORS
-
+ 
  //---- Use 32-bit vertex indices (default is 16-bit) is one way to allow large meshes with more than 64K vertices.
  // Your renderer backend will need to support it (most example renderer backends support both 16/32-bit indices).
 @@ -139,3 +139,6 @@ namespace ImGui
@@ -111,9 +111,9 @@ index a1e29e849bc8..ee64116ff0cf 100644
 +// handle https://github.com/ocornut/imgui/issues/1641 the old way
 +#define ImTextureID void*
 
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 1f0d9315262104756f883e2f9bc8a4d3e62ae3cd Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
-Date: Tue, 15 Sep 2026 17:17:47 +0000
+Date: Tue, 15 Sep 2026 17:26:13 +0000
 Subject: [PATCH 4/4] wiiu: disable ImGui's default shell-open handler
 
 Extends the __3DS__ case already handled upstream in imgui.cpp:
@@ -123,20 +123,16 @@ which devkitPPC's newlib provides on CafeOS. IMGUI_DISABLE_DEFAULT_
 SHELL_FUNCTIONS is ImGui's own documented config macro for exactly
 this, so this uses the same extension point rather than patching
 imgui.cpp itself.
-
 ---
  imconfig.h | 6 ++++++
  1 file changed, 6 insertions(+)
 
 diff --git a/imconfig.h b/imconfig.h
-index ee64116ff0cf..1a2b3c4d5e6f 100644
+index ee64116..f1a64e7 100644
 --- a/imconfig.h
 +++ b/imconfig.h
-@@ -139,6 +139,12 @@ namespace ImGui
-     void MyFunction(const char* name, MyMatrix44* mtx);
- }
- */
-
+@@ -142,3 +142,9 @@ namespace ImGui
+ 
  // handle https://github.com/ocornut/imgui/issues/1641 the old way
  #define ImTextureID void*
 +
