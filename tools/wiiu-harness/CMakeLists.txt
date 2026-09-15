@@ -16,7 +16,7 @@ add_executable(lus-harness
 
 set_property(TARGET lus-harness PROPERTY CXX_STANDARD 20)
 
-# Stage 4 (Context + display list) hand-authors a real Gfx[] using the gsSP*/gsDP* GBI macros
+# The context-test category hand-authors a real Gfx[] using the gsSP*/gsDP* GBI macros
 # from include/libultraship/libultra/gbi.h. Those macros expand differently per GBI_UCODE (see
 # src/CMakeLists.txt's target_compile_definitions(libultraship ...) for the same option) - without
 # this, the harness would encode opcodes libultraship.a's own Fast::Interpreter (built against
