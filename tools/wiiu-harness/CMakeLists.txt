@@ -22,6 +22,14 @@ target_link_libraries(lus-harness PRIVATE
     -Wl,--no-whole-archive
 )
 
+# TEMPORARY DIAGNOSTIC - reveals which object file(s) reference Ship::Part's
+# constructors, to root-cause the __atomic_fetch_add_8 link failure before
+# deciding on a real fix. Remove before merging.
+target_link_options(lus-harness PRIVATE
+    -Wl,--trace-symbol=_ZN4Ship4PartC2Ev
+    -Wl,--trace-symbol=_ZN4Ship4PartC2ESt10shared_ptrINS_7ContextEE
+)
+
 # No explicit -lwhb: current wut builds libwhb's sources directly into
 # libwut.a rather than packaging it as its own archive, and -lwut is added
 # automatically by the toolchain's wut.specs file.
