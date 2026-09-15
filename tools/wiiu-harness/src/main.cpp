@@ -62,6 +62,60 @@
 
 #include "HarnessWindow.h"
 
+// include/libultraship/libultra/gu.h declares guMtxIdent()/guPerspective() (and friends) but
+// nothing in this repo defines them - grepping the tree turns up zero .c/.cpp implementations.
+// They're meant to come from a real decomp's own libultra copy, the same way a decomp supplies
+// the microcode-generated display lists the context-test category below hand-authors. Since this
+// harness stands in for that decomp, it provides the minimal subset it actually calls here,
+// following the standard N64 SDK algorithm. Defined at global scope (not in the anonymous
+// namespace below) so they have the external "C" linkage the extern "C" declarations in gu.h
+// expect, with no linkage-mismatch ambiguity.
+//
+// A fixed-point Mtx here is MtxS (include/fast/types.h) - its intPart/fracPart layout is exactly
+// what Interpreter::GfxSpMatrix() decodes.
+extern "C" void guMtxIdentF(float mf[4][4]) {
+    std::memset(mf, 0, sizeof(float) * 16);
+    mf[0][0] = mf[1][1] = mf[2][2] = mf[3][3] = 1.0f;
+}
+
+extern "C" void guMtxF2L(float mf[4][4], Mtx* m) {
+    for (int row = 0; row < 4; row++) {
+        for (int col = 0; col < 4; col++) {
+            const int32_t fixed = (int32_t)(mf[row][col] * 65536.0f);
+            m->intPart[row][col] = (uint16_t)((fixed >> 16) & 0xFFFF);
+            m->fracPart[row][col] = (uint16_t)(fixed & 0xFFFF);
+        }
+    }
+}
+
+extern "C" void guMtxIdent(Mtx* m) {
+    float mf[4][4];
+    guMtxIdentF(mf);
+    guMtxF2L(mf, m);
+}
+
+extern "C" void guPerspective(Mtx* m, uint16_t* perspNorm, float fovy, float aspect, float near, float far,
+                              float scale) {
+    (void)scale; // only affects the perspNorm normalization below, which this untextured list ignores
+    float mf[4][4];
+    guMtxIdentF(mf);
+
+    const float angle = fovy * 0.5f * (3.14159265358979323846f / 180.0f);
+    const float cot = std::cos(angle) / std::sin(angle);
+    mf[0][0] = cot / aspect;
+    mf[1][1] = cot;
+    mf[2][2] = (near + far) / (near - far);
+    mf[2][3] = -1.0f;
+    mf[3][2] = 2.0f * near * far / (near - far);
+    mf[3][3] = 0.0f;
+
+    if (perspNorm != nullptr) {
+        *perspNorm = 0xFFFF; // no texture sampling in this display list, so no correction needed
+    }
+
+    guMtxF2L(mf, m);
+}
+
 namespace {
 
 void* sScreenBufferTV = nullptr;
