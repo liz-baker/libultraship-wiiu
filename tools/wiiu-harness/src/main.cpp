@@ -24,6 +24,17 @@
 #include "imgui.h"
 #include "fast/backends/gfx_gx2.h"
 #include "fast/backends/gfx_wiiu.h"
+
+// libultraship/libultra/controller.h (pulled in by ControlDeck.h below) unconditionally trails
+// with #include "os.h", which redefines OSThread/OSTime - both already defined by the real Wii U
+// SDK's <coreinit/thread.h>/<coreinit/time.h> included above (for the atomics stress test and
+// OSSleepTicks/OSMillisecondsToTicks). Nothing this harness needs from that chain - just
+// OSContPad and the BTN_* macros, both declared in controller.h before its os.h include - depends
+// on anything os.h itself provides, so pre-defining its include guard here skips that unrelated
+// (and, in a translation unit that also wants real coreinit types, actively conflicting) content
+// without touching the shared header. No other Wii U translation unit combines both header
+// families in one file, so this collision never surfaced before this harness.
+#define OS_H
 #include "libultraship/controller/controldeck/ControlDeck.h"
 #include "libultraship/libultra/controller.h"
 #include "ship/audio/Audio.h"
@@ -44,6 +55,11 @@ namespace {
 
 void* sScreenBufferTV = nullptr;
 void* sScreenBufferDRC = nullptr;
+
+// Mirrors libultraship's MAXCONTROLLERS (include/libultraship/libultra/os.h), which this file
+// can't include directly - see the OS_H comment above the includes block. This fork always
+// builds with the non-_HW_VERSION_1 (N64DD) value, so 4 is the only value that macro ever takes.
+constexpr uint8_t kControllerPortCount = 4;
 
 enum class Mode { Menu, BootLink, InputReadout, InputMapped, Audio, Gx2Renderer };
 
@@ -199,7 +215,7 @@ std::string DescribeAxes(int32_t deviceIndex) {
 // meaningful for multiplayer, rather than a harness-invented numbering.
 std::string DescribeDefaultPlayerSlot(int32_t deviceIndex) {
     std::string out;
-    for (uint8_t port = 0; port < MAXCONTROLLERS; port++) {
+    for (uint8_t port = 0; port < kControllerPortCount; port++) {
         for (int32_t candidate : Ship::WiiUDefaultDevicesForPort(port)) {
             if (candidate == deviceIndex) {
                 if (!out.empty()) {
@@ -476,8 +492,8 @@ struct ControlDeckTestState {
     std::shared_ptr<HarnessWindow> window;
     std::shared_ptr<LUS::ControlDeck> controlDeck;
     uint8_t controllerBits = 0;
-    OSContPad pads[MAXCONTROLLERS] = {};
-    bool rumbleHeld[MAXCONTROLLERS] = { false };
+    OSContPad pads[kControllerPortCount] = {};
+    bool rumbleHeld[kControllerPortCount] = { false };
 };
 
 // Constructed once on first entry and never torn down: Gui's destructor unconditionally tears
@@ -498,9 +514,9 @@ void EnsureControlDeckTest(ControlDeckTestState& state, const std::string& harne
     state.controlDeck->Init(&state.controllerBits);
 
     // Init() only seeds port 0 with default mappings when it finds no saved config. Add them to
-    // every port unconditionally so all MAXCONTROLLERS players get real button/axis/rumble
+    // every port unconditionally so every player gets real button/axis/rumble
     // mappings built from WiiUDefaultDevicesForPort(), regardless of what a prior run saved.
-    for (uint8_t port = 0; port < MAXCONTROLLERS; port++) {
+    for (uint8_t port = 0; port < kControllerPortCount; port++) {
         state.controlDeck->GetControllerByPort(port)->AddDefaultMappings(PHYSICAL_DEVICE_TYPE_GAMEPAD);
     }
 }
@@ -520,7 +536,7 @@ void PumpControlDeckTest(ControlDeckTestState& state) {
     // port to drive that port's Controller::GetRumble()->StartRumble()/StopRumble() through the
     // real RumbleMappingFactory-built WiiURumbleMapping fan-out, instead of calling
     // Ship::WiiU::SetRumble() directly.
-    for (uint8_t port = 0; port < MAXCONTROLLERS; port++) {
+    for (uint8_t port = 0; port < kControllerPortCount; port++) {
         bool held = false;
         for (int32_t deviceIndex : Ship::WiiUDefaultDevicesForPort(port)) {
             if (Ship::WiiU::GetButtonsHeld(deviceIndex) & Ship::WiiU::WIIU_BUTTON_PLUS) {
@@ -553,7 +569,7 @@ void RenderControlDeckTest(const ControlDeckTestState& state) {
         return;
     }
 
-    for (uint8_t port = 0; port < MAXCONTROLLERS; port++) {
+    for (uint8_t port = 0; port < kControllerPortCount; port++) {
         PrintBoth(row++, "Player " + std::to_string(port + 1) + " [" + DescribePortDevices(port) + "]");
         PrintBoth(row++, "  " + DescribeOSContPad(state.pads[port]));
     }
@@ -573,7 +589,7 @@ void WriteControlDeckResults(const std::string& resultsPath, const ControlDeckTe
         return;
     }
     std::fprintf(f, "libultraship Wii U harness - input: ControlDeck mapping\n");
-    for (uint8_t port = 0; port < MAXCONTROLLERS; port++) {
+    for (uint8_t port = 0; port < kControllerPortCount; port++) {
         std::fprintf(f, "Player %d [%s]\n", port + 1, DescribePortDevices(port).c_str());
         std::fprintf(f, "    %s\n", DescribeOSContPad(state.pads[port]).c_str());
         std::fprintf(f, "    rumble held: %s\n", state.rumbleHeld[port] ? "yes" : "no");
@@ -893,7 +909,7 @@ void StartGx2Test(Gx2TestState& state) {
 
     state.checkerTextureId = state.api->NewTexture();
     state.api->SelectTexture(/*tile=*/0, state.checkerTextureId);
-    const std::array<uint8_t, kCheckerSize* kCheckerSize* 4> checker = MakeCheckerTexture();
+    const std::array<uint8_t, kCheckerSize * kCheckerSize * 4> checker = MakeCheckerTexture();
     state.api->UploadTexture(checker.data(), kCheckerSize, kCheckerSize);
     // 0 == G_TX_NOMIRROR|G_TX_WRAP (libultraship/libultra/gbi.h) - passed as a literal so this
     // stage doesn't need to pull in the GBI headers just for two texture-wrap constants.
