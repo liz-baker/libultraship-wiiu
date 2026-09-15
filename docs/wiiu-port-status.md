@@ -215,18 +215,49 @@ is downmixed to the front pair rather than driving AX's surround path.
      Entering this stage is a one-way trip for the run: OSScreen isn't torn
      back down once GX2 has taken the screen, so `B` exits the harness
      instead of returning to the menu.
-   - **Stage 4 — full `Context` + mapping layer** (open): drive a
-     `ControlDeck` via `Context::CreateDefaultInstance(...)` to exercise
-     `mapping/wiiu/` end to end (built-in defaults, rumble). Confirmed during
-     Stage 0 investigation: `CreateDefaultInstance` cannot succeed with zero
-     archives — `ArchiveManager::Init` (`src/ship/resource/archive/ArchiveManager.cpp`)
-     only marks itself initialized once at least one archive loads, so this
-     stage needs either a minimal single-file `FolderArchive`-style directory,
-     or bypassing `CreateDefaultInstance` for the lower-level
-     `Context::CreateInstance(name, shortName, components)` overload,
-     hand-assembling only the components the mapping layer actually needs.
+   - **Input/audio through libultraship's own abstractions** (done, closed
+     via [issue #14](https://github.com/liz-baker/libultraship-wiiu/issues/14);
+     not a numbered stage): #14 pointed out that Stages 1/2 above only
+     exercised the raw Wii U backends (`WiiUInput`, `WiiUAudioPlayer`)
+     directly, not the `ControlDeck`/mapping layer or audio manager a real
+     decomp actually calls. This landed in `tools/wiiu-harness/src/main.cpp`
+     ahead of Stage 4: an "Input: ControlDeck Mapping" mode drives a real
+     `LUS::ControlDeck` through a minimal `Ship::Window` stub
+     (`HarnessWindow.h`) — no full `Context` needed, since
+     `GamepadGameInputBlocked()` only needs `Gui::GetMenuOrMenubarVisible()`,
+     safe on a `Gui` that's never had `Init()` called — and the audio mode
+     already goes through `Ship::Audio`/`Context::GetAudio()` rather than
+     `WiiUAudioPlayer` directly. This narrows what Stage 4 below still needs
+     to prove.
+   - **Stage 4 — full `Context` + a real display list** (open, scope
+     revised): with mapping and audio already validated above, what remains
+     is standing up a genuine `Context` and running something through the
+     F3D command interpreter (`src/fast/interpreter.cpp`, already part of
+     libultraship — no microcode or decomp source to copy in; a decomp's own
+     generated display lists are what run through this same interpreter) —
+     the one layer no harness stage has touched yet. Plan:
+     1. A minimal `FolderArchive` fixture — a handful of loose files, no
+        `.o2r`/OTR build pipeline needed — so `ArchiveManager::Init`
+        (`src/ship/resource/archive/ArchiveManager.cpp`) succeeds. Confirmed
+        during Stage 0 investigation that `Context::CreateInstance(...)`/
+        `CreateDefaultInstance` require at least one loaded archive.
+     2. A hand-authored `Gfx` display list — built the same way Stage 3
+        hand-encoded shader IDs — exercising a vertex load, one draw call,
+        and a texture bind through the real interpreter → `GfxRenderingAPIGX2`
+        path, rather than Stage 3's direct CPU-transform-and-call approach.
+     3. Bring up `Context::CreateInstance(...)` against that archive and
+        confirm whether `Fast3dGui`'s OTR-backed font path (untested — Stage
+        3 deliberately used ImGui's built-in font to avoid it) renders or
+        fails cleanly.
+
+     *Pass:* `Context` boots against the minimal archive, the hand-authored
+     display list renders through the interpreter without a hang or crash,
+     and the font path either renders or fails with a diagnosable error.
 2. Wii U input features not yet surfaced: the DRC's gyroscope (there is a
-   `ControllerGyroMapping` interface waiting for it) and its touch screen.
+   `ControllerGyroMapping` interface waiting for it) and its touch screen
+   (no mapping abstraction exists for touch anywhere in libultraship yet).
+   Tracked separately in [issue #19](https://github.com/liz-baker/libultraship-wiiu/issues/19)
+   so it doesn't block Stage 4 landing on real hardware.
 
 Progress is driven through CI on real devkitPPC output: the devkitPPC toolchain
 image cannot be pulled from the Claude Code sandbox (its Docker Hub blob CDN is
