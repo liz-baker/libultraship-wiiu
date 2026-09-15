@@ -24,17 +24,28 @@
 #include "imgui.h"
 #include "fast/backends/gfx_gx2.h"
 #include "fast/backends/gfx_wiiu.h"
+#include "libultraship/controller/controldeck/ControlDeck.h"
+#include "libultraship/libultra/controller.h"
+#include "ship/audio/Audio.h"
 #include "ship/audio/AudioPlayer.h"
+#include "ship/config/Config.h"
+#include "ship/config/ConsoleVariable.h"
+#include "ship/controller/controldevice/controller/Controller.h"
+#include "ship/controller/controldevice/controller/ControllerRumble.h"
+#include "ship/controller/controldevice/controller/mapping/wiiu/WiiUMapping.h"
+#include "ship/controller/physicaldevice/PhysicalDeviceType.h"
 #include "ship/port/wiiu/ImGui/imgui_impl_gx2.h"
 #include "ship/port/wiiu/WiiUImpl.h"
 #include "ship/port/wiiu/WiiUInput.h"
+
+#include "HarnessWindow.h"
 
 namespace {
 
 void* sScreenBufferTV = nullptr;
 void* sScreenBufferDRC = nullptr;
 
-enum class Mode { Menu, BootLink, InputReadout, Audio, Gx2Renderer };
+enum class Mode { Menu, BootLink, InputReadout, InputMapped, Audio, Gx2Renderer };
 
 struct MenuItem {
     const char* label;
@@ -42,10 +53,11 @@ struct MenuItem {
 };
 
 constexpr MenuItem kMenuItems[] = {
-    { "Stage 0: Boot & Link", Mode::BootLink },
-    { "Stage 1: Input Readout", Mode::InputReadout },
-    { "Stage 2: AX Audio", Mode::Audio },
-    { "Stage 3: GX2 Renderer", Mode::Gx2Renderer },
+    { "Core: Boot & Link", Mode::BootLink },
+    { "Input: Raw Readout", Mode::InputReadout },
+    { "Input: ControlDeck Mapping", Mode::InputMapped },
+    { "Audio: Manager Playback", Mode::Audio },
+    { "Graphics: GX2 Renderer", Mode::Gx2Renderer },
 };
 constexpr int kMenuItemCount = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 
@@ -95,7 +107,14 @@ ChannelMode NextChannelMode(ChannelMode mode) {
 }
 
 struct AudioTestState {
-    std::unique_ptr<Ship::WiiUAudioPlayer> player;
+    // Config backing the Audio manager below; only needs a writable path, no OTR/ArchiveManager.
+    std::shared_ptr<Ship::Config> config;
+    // The actual interface a decomp/port (e.g. Ship of Harkinian) calls: Context::GetAudio() in
+    // a full game, selecting/initialising the backend (AX here) and letting the channel mode be
+    // switched at runtime. Testing through this instead of constructing WiiUAudioPlayer directly
+    // exercises that selection path too (see issue #14).
+    std::shared_ptr<Ship::Audio> audioManager;
+    std::shared_ptr<Ship::AudioPlayer> player;
     double phaseL = 0.0;
     double phaseR = 0.0;
     uint64_t sampleIndex = 0;
@@ -115,10 +134,9 @@ void PrintBoth(int row, const std::string& text) {
     PrintLine(SCREEN_DRC, row, text);
 }
 
-// Creates sd:/wiiu/apps/lus-harness/, tolerating segments that already exist,
-// and returns the path to results.txt inside it, or an empty string if the
-// SD card isn't mounted.
-std::string ResultsFilePath() {
+// Creates sd:/wiiu/apps/lus-harness/, tolerating segments that already exist, and returns its
+// path, or an empty string if the SD card isn't mounted.
+std::string HarnessDirPath() {
     if (!WHBMountSdCard()) {
         return "";
     }
@@ -132,7 +150,7 @@ std::string ResultsFilePath() {
         mkdir(path.c_str(), 0777);
     }
 
-    return base + "/apps/lus-harness/results.txt";
+    return path;
 }
 
 // Free bytes remaining in the MEM2-backed default heap, as a coarse sanity
@@ -173,6 +191,74 @@ std::string DescribeAxes(int32_t deviceIndex) {
                   Ship::WiiU::GetAxisValue(deviceIndex, Ship::WiiU::WIIU_AXIS_RIGHT_X),
                   Ship::WiiU::GetAxisValue(deviceIndex, Ship::WiiU::WIIU_AXIS_RIGHT_Y));
     return buf;
+}
+
+// Which player(s) Ship::WiiUDefaultDevicesForPort() would bind this device to by default -
+// the same, already-shipped policy the real ControlDeck mapping layer uses (port 0 gets both
+// the GamePad and KPAD channel 0, so they share "P1"). This is what makes a device's "player"
+// meaningful for multiplayer, rather than a harness-invented numbering.
+std::string DescribeDefaultPlayerSlot(int32_t deviceIndex) {
+    std::string out;
+    for (uint8_t port = 0; port < MAXCONTROLLERS; port++) {
+        for (int32_t candidate : Ship::WiiUDefaultDevicesForPort(port)) {
+            if (candidate == deviceIndex) {
+                if (!out.empty()) {
+                    out += "/";
+                }
+                out += "P" + std::to_string(port + 1);
+            }
+        }
+    }
+    return out.empty() ? "no default port" : out;
+}
+
+// The device(s) Ship::WiiUDefaultDevicesForPort() binds to a given port by default, joined for
+// display (e.g. port 0 -> "Wii U GamePad + Wii U Controller 1 (disconnected)").
+std::string DescribePortDevices(uint8_t port) {
+    std::string out;
+    for (int32_t deviceIndex : Ship::WiiUDefaultDevicesForPort(port)) {
+        if (!out.empty()) {
+            out += " + ";
+        }
+        out += Ship::WiiU::GetDeviceName(deviceIndex);
+    }
+    return out;
+}
+
+// Decodes an OSContPad the way a real N64 decomp would read it: button names for the bits
+// AddDefaultMappings(PHYSICAL_DEVICE_TYPE_GAMEPAD) actually wires up (see
+// ControllerDefaultMappings::SetDefaultWiiU*Mappings), plus the analog stick and the fork's
+// bonus right_stick_x/y pair (the default mapping also derives the digital BTN_C* bits from the
+// same right-stick tilt, so both should move together).
+std::string DescribeOSContPad(const OSContPad& pad) {
+    struct BitName {
+        uint16_t bit;
+        const char* name;
+    };
+    constexpr BitName kBits[] = {
+        { BTN_A, "A" },         { BTN_B, "B" },           { BTN_Z, "Z" },     { BTN_L, "L" },
+        { BTN_R, "R" },         { BTN_START, "Start" },   { BTN_DUP, "DUp" }, { BTN_DDOWN, "DDown" },
+        { BTN_DLEFT, "DLeft" }, { BTN_DRIGHT, "DRight" }, { BTN_CUP, "CUp" }, { BTN_CDOWN, "CDown" },
+        { BTN_CLEFT, "CLeft" }, { BTN_CRIGHT, "CRight" },
+    };
+
+    std::string buttons;
+    for (const auto& entry : kBits) {
+        if (pad.button & entry.bit) {
+            if (!buttons.empty()) {
+                buttons += " ";
+            }
+            buttons += entry.name;
+        }
+    }
+    if (buttons.empty()) {
+        buttons = "(none)";
+    }
+
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), " stick:(%d,%d) rstick:(%d,%d)", pad.stick_x, pad.stick_y, pad.right_stick_x,
+                  pad.right_stick_y);
+    return buttons + buf;
 }
 
 // Exercises the WiiUAtomics.cpp __atomic_fetch_add_8 shim (see issue #16) under
@@ -252,7 +338,7 @@ void WriteBootLinkResults(const std::string& resultsPath, const std::string& hea
     if (f == nullptr) {
         return;
     }
-    std::fprintf(f, "libultraship Wii U harness - Stage 0: boot & link\n");
+    std::fprintf(f, "libultraship Wii U harness - core: boot & link\n");
     std::fprintf(f, "compiler: %s\n", __VERSION__);
     std::fprintf(f, "built: %s %s\n", __DATE__, __TIME__);
     std::fprintf(f, "%s\n", heapLine.c_str());
@@ -264,7 +350,7 @@ void WriteBootLinkResults(const std::string& resultsPath, const std::string& hea
                      atomicStress.Passed() ? "PASS" : "FAIL", static_cast<unsigned long long>(atomicStress.actual),
                      static_cast<unsigned long long>(atomicStress.expected));
     }
-    std::fprintf(f, "stage 0: %s\n", atomicStress.Passed() ? "PASS" : "FAIL");
+    std::fprintf(f, "core: %s\n", atomicStress.Passed() ? "PASS" : "FAIL");
     std::fclose(f);
 }
 
@@ -274,15 +360,17 @@ void WriteInputResults(const std::string& resultsPath) {
     if (f == nullptr) {
         return;
     }
-    std::fprintf(f, "libultraship Wii U harness - Stage 1: input readout\n");
+    std::fprintf(f, "libultraship Wii U harness - input: controller readout\n");
 
     const std::vector<int32_t> devices = Ship::WiiU::GetConnectedDeviceIndices();
     if (devices.empty()) {
         std::fprintf(f, "no controllers connected\n");
     }
+    std::fprintf(f, "%zu device(s) connected\n", devices.size());
     for (int32_t deviceIndex : devices) {
         const uint32_t held = Ship::WiiU::GetButtonsHeld(deviceIndex);
-        std::fprintf(f, "[%d] %s\n", deviceIndex, Ship::WiiU::GetDeviceName(deviceIndex).c_str());
+        std::fprintf(f, "[%d] %s (default: %s)\n", deviceIndex, Ship::WiiU::GetDeviceName(deviceIndex).c_str(),
+                     DescribeDefaultPlayerSlot(deviceIndex).c_str());
         std::fprintf(f, "    buttons: %s\n", DescribeButtonsHeld(deviceIndex, held).c_str());
         std::fprintf(f, "    axes: %s\n", DescribeAxes(deviceIndex).c_str());
     }
@@ -295,7 +383,7 @@ void WriteAudioResults(const std::string& resultsPath, const AudioTestState& sta
     if (f == nullptr) {
         return;
     }
-    std::fprintf(f, "libultraship Wii U harness - Stage 2: AX audio\n");
+    std::fprintf(f, "libultraship Wii U harness - audio: manager playback\n");
     if (!state.player) {
         std::fprintf(f, "audio player failed to initialize\n");
         std::fclose(f);
@@ -311,7 +399,7 @@ void WriteAudioResults(const std::string& resultsPath, const AudioTestState& sta
 void RenderMenu(int cursor) {
     int row = 0;
     PrintBoth(row++, "libultraship Wii U harness");
-    PrintBoth(row++, "select a stage to test:");
+    PrintBoth(row++, "select a category to test:");
     PrintBoth(row++, "");
     for (int i = 0; i < kMenuItemCount; i++) {
         PrintBoth(row++, std::string(i == cursor ? "> " : "  ") + kMenuItems[i].label);
@@ -324,7 +412,7 @@ void RenderBootLink(const std::string& resultsPath, const std::string& heapLine,
                     const AtomicStressResult& atomicStress) {
     int row = 0;
     PrintBoth(row++, "libultraship Wii U harness");
-    PrintBoth(row++, "Stage 0: boot & link");
+    PrintBoth(row++, "core: boot & link");
     PrintBoth(row++, "");
     PrintBoth(row++, std::string("compiler: ") + __VERSION__);
     PrintBoth(row++, std::string("built: ") + __DATE__ + " " + __TIME__);
@@ -351,7 +439,7 @@ void RenderBootLink(const std::string& resultsPath, const std::string& heapLine,
 void RenderInputReadout() {
     int row = 0;
     PrintBoth(row++, "libultraship Wii U harness");
-    PrintBoth(row++, "Stage 1: input readout");
+    PrintBoth(row++, "input: controller readout");
     PrintBoth(row++, "");
 
     const std::vector<int32_t> devices = Ship::WiiU::GetConnectedDeviceIndices();
@@ -360,19 +448,143 @@ void RenderInputReadout() {
     }
     for (int32_t deviceIndex : devices) {
         const uint32_t held = Ship::WiiU::GetButtonsHeld(deviceIndex);
-        PrintBoth(row++, Ship::WiiU::GetDeviceName(deviceIndex));
+        PrintBoth(row++, Ship::WiiU::GetDeviceName(deviceIndex) + " [" + DescribeDefaultPlayerSlot(deviceIndex) + "]");
         PrintBoth(row++, "  " + DescribeButtonsHeld(deviceIndex, held));
         PrintBoth(row++, "  " + DescribeAxes(deviceIndex));
     }
 
     PrintBoth(row++, "");
+    PrintBoth(row++, "[Px] = default ControlDeck player port (see next category).");
     PrintBoth(row++, "Press B to return to menu. Press HOME to exit.");
+}
+
+// --- Input: ControlDeck mapping (the real libultraship path) -----------------------------
+//
+// The readout above proves Ship::WiiU (raw VPAD/KPAD translation) works, but a real decomp
+// never calls that directly - it goes through ControlDeck -> mapping factories ->
+// WiiUButtonToButtonMapping/WiiUAxisDirectionToButtonMapping/WiiURumbleMapping, all built from
+// WiiUDefaultDevicesForPort() the same way a shipped game's would be (see issue #14). This test
+// drives an actual LUS::ControlDeck end to end and decodes the resulting OSContPad per port,
+// so a mapping-layer bug can be told apart from a WiiUInput.cpp bug.
+//
+// ControlDeck's mapping objects dereference mControlDeck->GamepadGameInputBlocked(), which
+// needs a live Window+Gui - see HarnessWindow.h for why a stub Window is enough here without
+// pulling in the OTR/ResourceManager machinery Stage 4 (full Context) would need.
+struct ControlDeckTestState {
+    std::shared_ptr<Ship::Config> config;
+    std::shared_ptr<Ship::ConsoleVariable> consoleVariable;
+    std::shared_ptr<HarnessWindow> window;
+    std::shared_ptr<LUS::ControlDeck> controlDeck;
+    uint8_t controllerBits = 0;
+    OSContPad pads[MAXCONTROLLERS] = {};
+    bool rumbleHeld[MAXCONTROLLERS] = { false };
+};
+
+// Constructed once on first entry and never torn down: Gui's destructor unconditionally tears
+// down an ImGui context, which is only meaningful for a Gui that was actually Init()'d (ours
+// deliberately isn't - see HarnessWindow.h), and there's no need to rebuild this state on every
+// menu visit.
+void EnsureControlDeckTest(ControlDeckTestState& state, const std::string& harnessDir) {
+    if (state.controlDeck != nullptr) {
+        return;
+    }
+
+    state.config = std::make_shared<Ship::Config>(harnessDir + "/input-config.json");
+    state.consoleVariable = std::make_shared<Ship::ConsoleVariable>(state.config);
+    state.window = std::make_shared<HarnessWindow>();
+    state.window->Init({});
+
+    state.controlDeck = std::make_shared<LUS::ControlDeck>(state.window, state.consoleVariable);
+    state.controlDeck->Init(&state.controllerBits);
+
+    // Init() only seeds port 0 with default mappings when it finds no saved config. Add them to
+    // every port unconditionally so all MAXCONTROLLERS players get real button/axis/rumble
+    // mappings built from WiiUDefaultDevicesForPort(), regardless of what a prior run saved.
+    for (uint8_t port = 0; port < MAXCONTROLLERS; port++) {
+        state.controlDeck->GetControllerByPort(port)->AddDefaultMappings(PHYSICAL_DEVICE_TYPE_GAMEPAD);
+    }
+}
+
+void PumpControlDeckTest(ControlDeckTestState& state) {
+    if (!state.controlDeck) {
+        return; // EnsureControlDeckTest() was never called - no SD card to back Config with.
+    }
+
+    std::memset(state.pads, 0, sizeof(state.pads));
+    // WriteToOSContPad() is private; WriteToPad() is the public override a real game calls
+    // (through the base Ship::ControlDeck interface) and forwards to it internally.
+    state.controlDeck->WriteToPad(static_cast<void*>(state.pads));
+
+    // "+" is the one button every Wii U device kind reports, including a bare Wii Remote (which
+    // has no Y/X), so it doubles as this test's rumble trigger: hold it on any device bound to a
+    // port to drive that port's Controller::GetRumble()->StartRumble()/StopRumble() through the
+    // real RumbleMappingFactory-built WiiURumbleMapping fan-out, instead of calling
+    // Ship::WiiU::SetRumble() directly.
+    for (uint8_t port = 0; port < MAXCONTROLLERS; port++) {
+        bool held = false;
+        for (int32_t deviceIndex : Ship::WiiUDefaultDevicesForPort(port)) {
+            if (Ship::WiiU::GetButtonsHeld(deviceIndex) & Ship::WiiU::WIIU_BUTTON_PLUS) {
+                held = true;
+                break;
+            }
+        }
+        if (held != state.rumbleHeld[port]) {
+            state.rumbleHeld[port] = held;
+            std::shared_ptr<Ship::ControllerRumble> rumble = state.controlDeck->GetControllerByPort(port)->GetRumble();
+            if (held) {
+                rumble->StartRumble();
+            } else {
+                rumble->StopRumble();
+            }
+        }
+    }
+}
+
+void RenderControlDeckTest(const ControlDeckTestState& state) {
+    int row = 0;
+    PrintBoth(row++, "libultraship Wii U harness");
+    PrintBoth(row++, "input: ControlDeck mapping");
+    PrintBoth(row++, "");
+
+    if (!state.controlDeck) {
+        PrintBoth(row++, "requires an SD card (Config needs a writable path).");
+        PrintBoth(row++, "");
+        PrintBoth(row++, "Press B to return to menu. Press HOME to exit.");
+        return;
+    }
+
+    for (uint8_t port = 0; port < MAXCONTROLLERS; port++) {
+        PrintBoth(row++, "Player " + std::to_string(port + 1) + " [" + DescribePortDevices(port) + "]");
+        PrintBoth(row++, "  " + DescribeOSContPad(state.pads[port]));
+    }
+
+    PrintBoth(row++, "");
+    PrintBoth(row++, "hold + on a device to rumble its player's port.");
+    PrintBoth(row++, "Press B to return to menu. Press HOME to exit.");
+}
+
+void WriteControlDeckResults(const std::string& resultsPath, const ControlDeckTestState& state) {
+    if (!state.controlDeck) {
+        return;
+    }
+
+    FILE* f = std::fopen(resultsPath.c_str(), "w");
+    if (f == nullptr) {
+        return;
+    }
+    std::fprintf(f, "libultraship Wii U harness - input: ControlDeck mapping\n");
+    for (uint8_t port = 0; port < MAXCONTROLLERS; port++) {
+        std::fprintf(f, "Player %d [%s]\n", port + 1, DescribePortDevices(port).c_str());
+        std::fprintf(f, "    %s\n", DescribeOSContPad(state.pads[port]).c_str());
+        std::fprintf(f, "    rumble held: %s\n", state.rumbleHeld[port] ? "yes" : "no");
+    }
+    std::fclose(f);
 }
 
 void RenderAudioTest(const AudioTestState& state) {
     int row = 0;
     PrintBoth(row++, "libultraship Wii U harness");
-    PrintBoth(row++, "Stage 2: AX audio");
+    PrintBoth(row++, "audio: manager playback");
     PrintBoth(row++, "");
 
     if (!state.player) {
@@ -403,11 +615,16 @@ void RenderAudioTest(const AudioTestState& state) {
     PrintBoth(row++, "Press B to return to menu. Press HOME to exit.");
 }
 
-void StartAudioTest(AudioTestState& state) {
+void StartAudioTest(AudioTestState& state, const std::string& harnessDir) {
+    state.config = std::make_shared<Ship::Config>(harnessDir + "/audio-config.json");
+
     Ship::AudioSettings settings;
-    state.player = std::make_unique<Ship::WiiUAudioPlayer>(settings);
-    if (!state.player->Init()) {
+    state.audioManager = std::make_shared<Ship::Audio>(settings, state.config);
+    state.audioManager->Init();
+    state.player = state.audioManager->GetAudioPlayer();
+    if (!state.player || !state.player->IsInitialized()) {
         state.player.reset();
+        state.audioManager.reset();
         return;
     }
     state.phaseL = 0.0;
@@ -421,7 +638,8 @@ void StartAudioTest(AudioTestState& state) {
 }
 
 void StopAudioTest(AudioTestState& state) {
-    state.player.reset(); // ~WiiUAudioPlayer tears the AX voices and ring buffers back down.
+    state.player.reset();
+    state.audioManager.reset(); // ~Audio destroys the AudioPlayer, which tears the AX voices down.
 }
 
 // Feeds the ring buffer up to its desired-buffered target with fresh sweep samples, then
@@ -430,7 +648,7 @@ void PumpAudioTest(AudioTestState& state) {
     if (!state.player) {
         return;
     }
-    Ship::WiiUAudioPlayer& player = *state.player;
+    Ship::AudioPlayer& player = *state.player;
     const int32_t sampleRate = player.GetSampleRate();
     const int32_t sampleLength = player.GetSampleLength();
     const int32_t desired = player.GetDesiredBuffered();
@@ -482,7 +700,7 @@ void PumpAudioTest(AudioTestState& state) {
     }
 }
 
-// --- Stage 3: GX2 renderer ---------------------------------------------------------------
+// --- graphics: GX2 renderer ---------------------------------------------------------------
 //
 // Unlike Stages 0-2, this drives Fast::GfxRenderingAPIGX2 directly instead of talking to the
 // raw Wii U SDK, on purpose: that's the layer a real N64 decomp actually calls (through the F3D
@@ -654,7 +872,7 @@ struct Gx2TestState {
 };
 
 void StartGx2Test(Gx2TestState& state) {
-    WHBLogPrint("Stage 3: bringing up GfxWindowBackendWiiU + GfxRenderingAPIGX2");
+    WHBLogPrint("Graphics: bringing up GfxWindowBackendWiiU + GfxRenderingAPIGX2");
 
     state.window = new Fast::GfxWindowBackendWiiU(nullptr);
     state.api = new Fast::GfxRenderingAPIGX2();
@@ -668,7 +886,7 @@ void StartGx2Test(Gx2TestState& state) {
     state.cubeShader = state.api->CreateAndLoadNewShader(kCubeShaderId0, kCubeShaderId1);
     state.quadShader = state.api->CreateAndLoadNewShader(kQuadShaderId0, kQuadShaderId1);
     if (!state.cubeShader || !state.quadShader) {
-        WHBLogPrint("Stage 3: shader generation FAILED");
+        WHBLogPrint("Graphics: shader generation FAILED");
         state.initFailed = true;
         return;
     }
@@ -684,10 +902,10 @@ void StartGx2Test(Gx2TestState& state) {
     ImGui::CreateContext();
     state.imguiReady = ImGui_ImplGX2_Init();
     if (!state.imguiReady) {
-        WHBLogPrint("Stage 3: ImGui_ImplGX2_Init FAILED (continuing without the overlay)");
+        WHBLogPrint("Graphics: ImGui_ImplGX2_Init FAILED (continuing without the overlay)");
     }
 
-    WHBLogPrint("Stage 3: init OK");
+    WHBLogPrint("Graphics: init OK");
 }
 
 void StopGx2Test(Gx2TestState& state) {
@@ -770,7 +988,7 @@ void PumpAndRenderGx2Test(Gx2TestState& state, const std::string& resultsPath, i
         io.DisplaySize = ImVec2((float)WIIU_DEFAULT_FB_WIDTH, (float)WIIU_DEFAULT_FB_HEIGHT);
         io.DeltaTime = std::max(frametime / 1000000.0f, 1.0f / 1000.0f);
         ImGui::NewFrame();
-        ImGui::Begin("libultraship Wii U harness - Stage 3");
+        ImGui::Begin("libultraship Wii U harness - Graphics");
         ImGui::Text("frame: %u", state.frameCount);
         ImGui::Text("cube shader: %s", state.cubeShader ? "OK" : "FAILED");
         ImGui::Text("quad shader: %s", state.quadShader ? "OK" : "FAILED");
@@ -790,7 +1008,7 @@ void PumpAndRenderGx2Test(Gx2TestState& state, const std::string& resultsPath, i
     if (!resultsPath.empty() && periodicResultsCounter-- <= 0) {
         FILE* f = std::fopen(resultsPath.c_str(), "w");
         if (f != nullptr) {
-            std::fprintf(f, "libultraship Wii U harness - Stage 3: GX2 renderer\n");
+            std::fprintf(f, "libultraship Wii U harness - graphics: GX2 renderer\n");
             std::fprintf(f, "frame: %u\n", state.frameCount);
             std::fprintf(f, "cube shader: %s\n", state.cubeShader ? "OK" : "FAILED");
             std::fprintf(f, "quad shader: %s\n", state.quadShader ? "OK" : "FAILED");
@@ -819,7 +1037,8 @@ int main(int argc, char** argv) {
 
     Ship::WiiU::Init("lus-harness");
 
-    const std::string resultsPath = ResultsFilePath();
+    const std::string harnessDir = HarnessDirPath();
+    const std::string resultsPath = harnessDir.empty() ? "" : harnessDir + "/results.txt";
     const bool sdWriteOk = !resultsPath.empty();
 
     char heapLineBuf[64];
@@ -837,6 +1056,7 @@ int main(int argc, char** argv) {
     uint32_t prevGamePadHeld = 0;
     int periodicResultsCounter = 0;
     AudioTestState audioTestState;
+    ControlDeckTestState controlDeckTestState;
     Gx2TestState gx2TestState;
     bool quitRequested = false;
 
@@ -857,8 +1077,10 @@ int main(int argc, char** argv) {
             if (pressed & Ship::WiiU::WIIU_BUTTON_A) {
                 mode = kMenuItems[menuCursor].mode;
                 periodicResultsCounter = 0;
-                if (mode == Mode::Audio) {
-                    StartAudioTest(audioTestState);
+                if (mode == Mode::InputMapped && sdWriteOk) {
+                    EnsureControlDeckTest(controlDeckTestState, harnessDir);
+                } else if (mode == Mode::Audio && sdWriteOk) {
+                    StartAudioTest(audioTestState, harnessDir);
                 } else if (mode == Mode::Gx2Renderer) {
                     StartGx2Test(gx2TestState);
                 }
@@ -900,6 +1122,14 @@ int main(int argc, char** argv) {
                 RenderInputReadout();
                 if (sdWriteOk && periodicResultsCounter-- <= 0) {
                     WriteInputResults(resultsPath);
+                    periodicResultsCounter = 30; // roughly once a second at 33ms/frame
+                }
+                break;
+            case Mode::InputMapped:
+                PumpControlDeckTest(controlDeckTestState);
+                RenderControlDeckTest(controlDeckTestState);
+                if (sdWriteOk && periodicResultsCounter-- <= 0) {
+                    WriteControlDeckResults(resultsPath, controlDeckTestState);
                     periodicResultsCounter = 30; // roughly once a second at 33ms/frame
                 }
                 break;
