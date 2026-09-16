@@ -2,6 +2,14 @@ name: build-wiiu
 # Only run on PRs, pushes to main, and version tags. Running on every branch
 # push as well would double-fire for PR branches and hammer the devkitPro
 # package mirror (which rate-limits DB syncs with HTTP 403).
+#
+# Build type: Debug everywhere except an actual v* tag release. PRs and the
+# per-commit main prerelease are what hardware testing actually downloads and
+# runs, and Debug is what turns on WHBLogUdp (see WiiUImpl.cpp's #ifdef
+# _DEBUG) plus exercises that guarded code path in CI at all - it was never
+# compiled here before this switch, Debug or otherwise. A tagged release is
+# for people using the port rather than debugging it, so that one stays
+# Release.
 on:
   push:
     branches: [main]
@@ -55,17 +63,25 @@ jobs:
             || python3 -m pip install -r requirements.txt \
             || pip3 install -r requirements.txt --break-system-packages \
             || true
+      - name: Determine build type
+        id: build_type
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "value=Release" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=Debug" >> "$GITHUB_OUTPUT"
+          fi
       - name: Configure
         run: |
           source /etc/profile.d/devkit-env.sh || true
           export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}
           cmake --no-warn-unused-cli -H. -Bbuild-wiiu -GNinja \
             -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/WiiU.cmake \
-            -DCMAKE_BUILD_TYPE:STRING=Release
+            -DCMAKE_BUILD_TYPE:STRING=${{ steps.build_type.outputs.value }}
       - name: Build
         run: |
           export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}
-          cmake --build build-wiiu --config Release --parallel
+          cmake --build build-wiiu --config ${{ steps.build_type.outputs.value }} --parallel
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
@@ -85,8 +101,10 @@ jobs:
       # Skipped on PR builds — only pushes to main or a v* tag publish.
       #
       # - push to main: a new prerelease per commit (tag wiiu-main-<sha>),
-      #   giving every merge a stable, permanent download link.
-      # - push of a v* tag: a real, non-prerelease release at that tag.
+      #   giving every merge a stable, permanent download link. Built Debug -
+      #   see the build-type comment at the top of this file.
+      # - push of a v* tag: a real, non-prerelease release at that tag, built
+      #   Release.
       - name: Determine release metadata
         if: github.event_name == 'push'
         id: release_meta
@@ -98,7 +116,7 @@ jobs:
           else
             short_sha="${GITHUB_SHA:0:7}"
             echo "tag=wiiu-main-${short_sha}" >> "$GITHUB_OUTPUT"
-            echo "name=Wii U build ${short_sha} (main)" >> "$GITHUB_OUTPUT"
+            echo "name=Wii U build ${short_sha} (main, Debug)" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Publish release
