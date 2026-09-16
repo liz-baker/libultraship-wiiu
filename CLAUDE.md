@@ -66,3 +66,31 @@ cmake --build build-wiiu
 
 - C++ is formatted with **clang-format-14** (`.clang-format`). Run it on changed
   files before pushing or `tidy-format` will fail.
+
+## Platform-specific behavior belongs in the cross-platform API, not in Init()/Exit()
+
+When Wii U needs to do something every other platform already does
+differently per-platform (resolve a writable directory, find the app bundle
+path, etc.), look first for an existing cross-platform entry point - e.g.
+`Context::GetAppDirectoryPath()`, `Context::GetAppBundlePath()` - and add a
+`__WIIU__` branch there, matching that function's existing contract (what it
+returns, whether it creates anything, what "failure" looks like). Don't bolt
+a workaround onto `Ship::WiiU::Init()`/`Exit()` (`src/ship/port/wiiu/WiiUImpl.cpp`)
+just because that's where Wii U-specific bring-up already lives - those should
+stay limited to genuine platform bring-up (logging, native input), not path/
+filesystem policy that has a real cross-platform home.
+
+This is exactly what happened with SD card directory setup: `Init()` used to
+`mkdir()`/`chdir()` straight into `/vol/external01/...` with every return
+value discarded, standing in for a missing `__WIIU__` case in
+`GetAppDirectoryPath()` (every other platform's directory resolution lives
+there, not in their equivalent of `Init()`). Fixed by adding that case
+(`WiiUAppDirectoryPath()` in `Context.cpp`) instead of hardening the
+workaround in place - see the discussion on
+[liz-baker/lus-wiiu-harness#4](https://github.com/liz-baker/lus-wiiu-harness/issues/4).
+
+`GetAppBundlePath()` (read-only install/bundle path, used by
+`GetPathRelativeToAppBundle()`/`LocateFileAcrossAppDirs()`) has the same gap
+on Wii U and also falls through to `"."` - currently harmless since nothing
+Wii U-reachable calls it yet (`os.cpp`'s only call is `#ifndef __WIIU__`),
+but worth the same fix if/when something on this platform needs it.

@@ -2,12 +2,11 @@
 #include "WiiUImpl.h"
 
 #include <stdio.h>
-#include <unistd.h>
-#include <sys/stat.h>
 #include <sys/iosupport.h>
 
 #include <whb/log.h>
 #include <whb/log_udp.h>
+#include <whb/sdcard.h>
 #include <coreinit/debug.h>
 
 #include <vpad/input.h>
@@ -59,12 +58,12 @@ void Init(const std::string& shortName) {
     devoptab_list[STD_ERR] = &dotab_stdout;
 #endif
 
-    // make sure the required folders exist
-    mkdir("/vol/external01/wiiu/", 0755);
-    mkdir("/vol/external01/wiiu/apps/", 0755);
-    mkdir(("/vol/external01/wiiu/apps/" + shortName + "/").c_str(), 0755);
-
-    chdir(("/vol/external01/wiiu/apps/" + shortName + "/").c_str());
+    // Deliberately no filesystem/SD card setup here: this used to mkdir()/chdir() into the SD
+    // card directly (raw, unchecked, no mount call), standing in for a missing Wii U case in
+    // Context::GetAppDirectoryPath() - the actual, cross-platform API for "give me a writable
+    // per-app directory" that every other platform already implements there (Android/iOS/Apple/
+    // Linux/SDL_GetPrefPath()). That's been fixed at the right layer - see WiiUAppDirectoryPath()
+    // in Context.cpp - so this stays a pure platform bring-up function: logging and input only.
 
     // Bring up native input. SDL3 is unavailable on the Wii U, so we read the
     // VPAD (gamepad) and KPAD (Wii Remote / Pro Controller) devices directly.
@@ -75,6 +74,9 @@ void Init(const std::string& shortName) {
 
 void Exit() {
     KPADShutdown();
+
+    // Safe even if Context::GetAppDirectoryPath() (Context.cpp) never mounted the card this run.
+    WHBUnmountSdCard();
 
     WHBLogUdpDeinit();
 }
