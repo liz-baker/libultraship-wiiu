@@ -4,7 +4,9 @@
 #include <algorithm>
 #include "ship/config/ConsoleVariable.h"
 #include "ship/window/Window.h"
+#ifndef __WIIU__
 #include <SDL3/SDL_events.h>
+#endif
 #include <spdlog/spdlog.h>
 #include "ship/utils/StringHelper.h"
 

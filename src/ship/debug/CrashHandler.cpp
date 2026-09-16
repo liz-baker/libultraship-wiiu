@@ -202,10 +202,12 @@ static void ErrorHandler(int sig, siginfo_t* sigInfo, void* data) {
         snprintf(intToCharBuffer, sizeof(intToCharBuffer), "%i ", (int)i);
         WRITE_VAR_LINE(crashHandler, intToCharBuffer, functionName.c_str());
     }
+#ifndef __WIIU__
     SDL_ShowSimpleMessageBox(
         SDL_MESSAGEBOX_ERROR, (GetCrashAppName() + " has crashed").c_str(),
         (GetCrashAppName() + " has crashed. Please upload the logs to the support channel in discord.").c_str(),
         nullptr);
+#endif
     free(symbols);
     crashHandler->PrintCommon();
 

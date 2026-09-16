@@ -24,12 +24,24 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     list(FILTER Source_Files__Audio EXCLUDE REGEX "audio/CoreAudioAudioPlayer.*")
 endif()
 
+if (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    list(FILTER Source_Files__Audio EXCLUDE REGEX "audio/SDLAudioPlayer.*")
+else()
+    list(FILTER Source_Files__Audio EXCLUDE REGEX "audio/WiiUAudioPlayer.*")
+endif()
+
 source_group("audio" FILES ${Source_Files__Audio})
 target_sources(libultraship PRIVATE ${Source_Files__Audio})
 
 #=================== Controller ===================
 
 file(GLOB_RECURSE Source_Files__Controller RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "controller/*.cpp")
+
+if (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    list(FILTER Source_Files__Controller EXCLUDE REGEX "controller/controldevice/controller/mapping/sdl/")
+else()
+    list(FILTER Source_Files__Controller EXCLUDE REGEX "controller/controldevice/controller/mapping/wiiu/")
+endif()
 
 source_group("controller" FILES ${Source_Files__Controller})
 target_sources(libultraship PRIVATE ${Source_Files__Controller})
@@ -105,6 +117,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Android" OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(Source_Files__Port
         ${CMAKE_CURRENT_SOURCE_DIR}/port/mobile/MobileImpl.cpp
     )
+elseif (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    file(GLOB_RECURSE Source_Files__Port RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "port/wiiu/*.cpp")
 endif()
 
 source_group("port" FILES ${Source_Files__Port})

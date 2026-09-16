@@ -244,7 +244,7 @@ bool ControllerButton::ProcessMouseButtonEvent(bool isPressed, MouseBtn button) 
 }
 
 void ControllerButton::AddDefaultMappings(PhysicalDeviceType physicalDeviceType) {
-    if (physicalDeviceType == PhysicalDeviceType::SDLGamepad) {
+    if (physicalDeviceType == PHYSICAL_DEVICE_TYPE_GAMEPAD) {
         for (auto mapping : ButtonMappingFactory::CreateDefaultSDLButtonMappings(mPortIndex, mBitmask, mConsoleVariable,
                                                                                  mControlDeck)) {
             AddButtonMapping(mapping);

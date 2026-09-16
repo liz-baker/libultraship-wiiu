@@ -372,6 +372,8 @@ extern/nlohmann-json/*_jsonConfig*
 *.xcworkspace
 *.xcsettings
 build*
+# ...but never ignore GitHub Actions workflow files named build-*.yml
+!.github/workflows/build*
 doxygen_out/
 docs/doxygen/_site/
 docs/doxygen/.jekyll-cache/

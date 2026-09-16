@@ -4,7 +4,11 @@
 #include <unordered_set>
 #include <vector>
 #include <string>
+#ifndef __WIIU__
 #include <SDL3/SDL.h>
+#else
+typedef struct SDL_Gamepad SDL_Gamepad;
+#endif
 
 namespace Ship {
 

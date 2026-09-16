@@ -7,12 +7,18 @@
 #include "ship/window/FileDrop.h"
 #include "ship/resource/ResourceManager.h"
 #include "fast/interpreter.h"
+#ifndef __WIIU__
 #include "fast/backends/gfx_sdl.h"
 #include "fast/backends/gfx_dxgi.h"
 #include "fast/backends/gfx_opengl.h"
 #include "fast/backends/gfx_metal.h"
 #include "fast/backends/gfx_direct3d_common.h"
 #include "fast/backends/gfx_direct3d11.h"
+#endif
+#ifdef __WIIU__
+#include "fast/backends/gfx_gx2.h"
+#include "fast/backends/gfx_wiiu.h"
+#endif
 #include "fast/backends/gfx_window_manager_api.h"
 
 #include "fast/Fast3dGui.h"
@@ -43,7 +49,11 @@ Fast3dWindow::Fast3dWindow(std::shared_ptr<Ship::Gui> gui, std::shared_ptr<FastM
         AddAvailableWindowBackend(WindowBackend::FAST3D_SDL_METAL);
     }
 #endif
+#ifdef __WIIU__
+    AddAvailableWindowBackend(WindowBackend::FAST3D_GX2);
+#else
     AddAvailableWindowBackend(WindowBackend::FAST3D_SDL_OPENGL);
+#endif
 }
 
 Fast3dWindow::Fast3dWindow(std::shared_ptr<Ship::Gui> gui, std::shared_ptr<Ship::Config> config,
@@ -189,6 +199,12 @@ void Fast3dWindow::InitWindowManager() {
                                         GetConsoleVariables(), std::dynamic_pointer_cast<Fast::Fast3dGui>(GetGui()));
             mRenderingApi = new GfxRenderingAPIMetal(GetConsoleVariables(),
                                                      GetContext()->GetChildren().GetFirst<Ship::ResourceManager>());
+            break;
+#endif
+#ifdef __WIIU__
+        case WindowBackend::FAST3D_GX2:
+            mWindowManagerApi = new GfxWindowBackendWiiU(std::dynamic_pointer_cast<Fast::Fast3dGui>(GetGui()));
+            mRenderingApi = new GfxRenderingAPIGX2();
             break;
 #endif
         default:
@@ -463,6 +479,10 @@ std::string Fast3dWindow::GetWindowBackendName() {
 #ifdef __APPLE__
         case WindowBackend::FAST3D_SDL_METAL:
             return "Metal";
+#endif
+#ifdef __WIIU__
+        case WindowBackend::FAST3D_GX2:
+            return "GX2";
 #endif
         default:
             return "";

@@ -104,6 +104,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
     include(cmake/dependencies/openbsd.cmake)
 endif()
 
+# Wii U (Cafe) — devkitPPC/wut toolchain sets CMAKE_SYSTEM_NAME to "CafeOS".
+if(CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    include(cmake/dependencies/wiiu.cmake)
+endif()
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     include(cmake/dependencies/windows.cmake)
 endif()

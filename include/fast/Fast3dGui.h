@@ -1,5 +1,7 @@
 #pragma once
+#ifndef __WIIU__
 #include <SDL3/SDL.h>
+#endif
 #include "ship/window/gui/Gui.h"
 #include "fast/WindowEvent.h"
 #include "fast/resource/type/Texture.h"
@@ -40,8 +42,12 @@ typedef struct {
             void* Context; ///< SDL_GLContext
         } Opengl;
         struct {
-            void* Window;           ///< SDL_Window*
+            void* Window; ///< SDL_Window*
+#ifndef __WIIU__
             SDL_Renderer* Renderer; ///< SDL_Renderer* (for Metal layer)
+#else
+            void* Renderer;
+#endif
         } Metal;
         struct {
             uint32_t Width;  ///< Framebuffer width in pixels.

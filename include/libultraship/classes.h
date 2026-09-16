@@ -50,7 +50,11 @@
 #if defined(_WIN32)
 #include "ship/audio/WasapiAudioPlayer.h"
 #endif
+#ifndef __WIIU__
 #include "ship/audio/SDLAudioPlayer.h"
+#else
+#include "ship/audio/WiiUAudioPlayer.h"
+#endif
 #include "ship/events/EventSystem.h"
 #include "ship/security/Keystore.h"
 #include "ship/log/Logger.h"

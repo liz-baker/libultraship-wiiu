@@ -1,0 +1,125 @@
+name: build-wiiu
+# Only run on PRs, pushes to main, and version tags. Running on every branch
+# push as well would double-fire for PR branches and hammer the devkitPro
+# package mirror (which rate-limits DB syncs with HTTP 403).
+#
+# Build type: Debug everywhere except an actual v* tag release. PRs and the
+# per-commit main prerelease are what hardware testing actually downloads and
+# runs, and Debug is what turns on WHBLogUdp (see WiiUImpl.cpp's #ifdef
+# _DEBUG) plus exercises that guarded code path in CI at all - it was never
+# compiled here before this switch, Debug or otherwise. A tagged release is
+# for people using the port rather than debugging it, so that one stays
+# Release.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-wiiu:
+    runs-on: ubuntu-latest
+    # The official devkitPro image ships the devkitPPC/wut toolchain and the
+    # WiiU CMake toolchain file used to cross-compile for the console.
+    container:
+      image: devkitpro/devkitppc:latest
+    # Needed to publish the release step below. No-op on pull_request builds,
+    # which don't reach that step.
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Wii U dependencies
+        run: |
+          # Portlibs the core links against.
+          #
+          # The devkitPro mirror frequently returns HTTP 403 when syncing the
+          # package databases (dkp-*.db) from GitHub Actions. The image already
+          # ships a populated pacman DB, so first try installing WITHOUT a DB
+          # sync (-S, no -y) which only fetches the package files. Fall back to
+          # a full sync with backoff only if a package is missing locally.
+          PKGS="wiiu-cmake wiiu-pkg-config ppc-tinyxml2 ppc-libzip ppc-zlib ppc-bzip2"
+          if dkp-pacman -S --needed --noconfirm $PKGS; then
+            exit 0
+          fi
+          echo "Install without DB sync failed; falling back to synced install"
+          for attempt in 1 2 3 4 5; do
+            if dkp-pacman -Syu --needed --noconfirm $PKGS; then
+              exit 0
+            fi
+            echo "dkp-pacman sync attempt $attempt failed; retrying in $((attempt * 15))s"
+            sleep $((attempt * 15))
+          done
+          echo "dkp-pacman failed after retries" >&2
+          exit 1
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install -r requirements.txt --break-system-packages \
+            || python3 -m pip install -r requirements.txt \
+            || pip3 install -r requirements.txt --break-system-packages \
+            || true
+      - name: Determine build type
+        id: build_type
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "value=Release" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=Debug" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Configure
+        run: |
+          source /etc/profile.d/devkit-env.sh || true
+          export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}
+          cmake --no-warn-unused-cli -H. -Bbuild-wiiu -GNinja \
+            -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/WiiU.cmake \
+            -DCMAKE_BUILD_TYPE:STRING=${{ steps.build_type.outputs.value }}
+      - name: Build
+        run: |
+          export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}
+          cmake --build build-wiiu --config ${{ steps.build_type.outputs.value }} --parallel
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: libultraship-wiiu
+          path: build-wiiu/src/*.a
+          if-no-files-found: error
+
+      # Publish a GitHub Release with the build artifact attached, so testing
+      # on a real console is "download from a release, drop on SD" instead of
+      # digging through a logged-in Actions run whose artifacts expire.
+      # Skipped on PR builds — only pushes to main or a v* tag publish.
+      #
+      # - push to main: a new prerelease per commit (tag wiiu-main-<sha>),
+      #   giving every merge a stable, permanent download link. Built Debug -
+      #   see the build-type comment at the top of this file.
+      # - push of a v* tag: a real, non-prerelease release at that tag, built
+      #   Release.
+      - name: Determine release metadata
+        if: github.event_name == 'push'
+        id: release_meta
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "name=libultraship Wii U ${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            short_sha="${GITHUB_SHA:0:7}"
+            echo "tag=wiiu-main-${short_sha}" >> "$GITHUB_OUTPUT"
+            echo "name=Wii U build ${short_sha} (main, Debug)" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          name: ${{ steps.release_meta.outputs.name }}
+          prerelease: ${{ steps.release_meta.outputs.prerelease }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            build-wiiu/src/*.a
