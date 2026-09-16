@@ -1,6 +1,8 @@
 #ifdef __WIIU__
 #include "WiiUImpl.h"
 
+#include <cerrno>
+#include <cstring>
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -8,7 +10,10 @@
 
 #include <whb/log.h>
 #include <whb/log_udp.h>
+#include <whb/sdcard.h>
 #include <coreinit/debug.h>
+#include <coreinit/thread.h>
+#include <coreinit/time.h>
 
 #include <vpad/input.h>
 #include <padscore/kpad.h>
@@ -24,6 +29,8 @@ static VPADStatus vpadStatus;
 static bool hasKpad[4] = { false };
 static KPADError kpadError[4] = { KPAD_ERROR_OK };
 static KPADStatus kpadStatus[4];
+
+static bool sSdCardMounted = false;
 
 #ifdef _DEBUG
 extern "C" {
@@ -50,6 +57,53 @@ static const devoptab_t dotab_stdout = {
 };
 #endif
 
+// Mounts the SD card and makes sd:/wiiu/apps/<shortName>/ the process's working directory.
+//
+// This used to be raw mkdir()/chdir() straight against the hardcoded path "/vol/external01/..."
+// (the WUT path alias for the SD card), with no mount call of its own and every return value
+// discarded. That's the same directory WHBMountSdCard()/WHBGetSdCardMountPath() resolve to, but
+// getting there without going through WHBMountSdCard() first meant this ran before anything had
+// confirmed the console's SD/FS subsystem was actually ready - the same startup race documented
+// for liz-baker/lus-wiiu-harness#21 (an unretried WHBMountSdCard() call failing on hardware that
+// had a working SD card the whole time). A failure here was invisible: mkdir() failing left the
+// next mkdir() cascading-failing against a nonexistent parent, chdir() then failing silently and
+// leaving the working directory wherever the loader started the process - see
+// liz-baker/lus-wiiu-harness#4. Retrying the mount call a few times, checking every return value,
+// and logging failures (mirroring the harness's own HarnessDirPath()) makes a real failure visible
+// instead of silently leaving the process off the SD card.
+static void MountSdCardAndChdir(const std::string& shortName) {
+    constexpr int kMountAttempts = 5;
+    constexpr OSTime kMountRetryDelayMs = 200;
+
+    for (int attempt = 1; attempt <= kMountAttempts; attempt++) {
+        if (WHBMountSdCard()) {
+            sSdCardMounted = true;
+            break;
+        }
+        WHBLogPrintf("Ship::WiiU::Init: WHBMountSdCard() failed (attempt %d/%d)", attempt, kMountAttempts);
+        if (attempt < kMountAttempts) {
+            OSSleepTicks(OSMillisecondsToTicks(kMountRetryDelayMs));
+        }
+    }
+    if (!sSdCardMounted) {
+        WHBLogPrint("Ship::WiiU::Init: giving up on SD card mount after retries; working directory left unchanged");
+        return;
+    }
+
+    const std::string wiiuDir = std::string(WHBGetSdCardMountPath()) + "wiiu/";
+    const std::string appsDir = wiiuDir + "apps/";
+    const std::string appDir = appsDir + shortName + "/";
+    for (const std::string& dir : { wiiuDir, appsDir, appDir }) {
+        if (mkdir(dir.c_str(), 0755) != 0 && errno != EEXIST) {
+            WHBLogPrintf("Ship::WiiU::Init: mkdir(%s) failed: %s", dir.c_str(), strerror(errno));
+        }
+    }
+
+    if (chdir(appDir.c_str()) != 0) {
+        WHBLogPrintf("Ship::WiiU::Init: chdir(%s) failed: %s", appDir.c_str(), strerror(errno));
+    }
+}
+
 void Init(const std::string& shortName) {
 #ifdef _DEBUG
     WHBLogUdpInit();
@@ -59,12 +113,7 @@ void Init(const std::string& shortName) {
     devoptab_list[STD_ERR] = &dotab_stdout;
 #endif
 
-    // make sure the required folders exist
-    mkdir("/vol/external01/wiiu/", 0755);
-    mkdir("/vol/external01/wiiu/apps/", 0755);
-    mkdir(("/vol/external01/wiiu/apps/" + shortName + "/").c_str(), 0755);
-
-    chdir(("/vol/external01/wiiu/apps/" + shortName + "/").c_str());
+    MountSdCardAndChdir(shortName);
 
     // Bring up native input. SDL3 is unavailable on the Wii U, so we read the
     // VPAD (gamepad) and KPAD (Wii Remote / Pro Controller) devices directly.
@@ -75,6 +124,11 @@ void Init(const std::string& shortName) {
 
 void Exit() {
     KPADShutdown();
+
+    if (sSdCardMounted) {
+        WHBUnmountSdCard();
+        sSdCardMounted = false;
+    }
 
     WHBLogUdpDeinit();
 }
