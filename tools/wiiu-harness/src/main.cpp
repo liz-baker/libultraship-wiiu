@@ -218,8 +218,28 @@ void PrintBoth(int row, const std::string& text) {
 
 // Creates sd:/wiiu/apps/lus-harness/, tolerating segments that already exist, and returns its
 // path, or an empty string if the SD card isn't mounted.
+//
+// WHBMountSdCard() can transiently fail if called immediately at process start, before the
+// console's SD/FS subsystem has finished settling after launch - retrying a few times a short
+// beat apart clears that up without masking a real "no SD card" condition (which keeps failing
+// every attempt).
 std::string HarnessDirPath() {
-    if (!WHBMountSdCard()) {
+    constexpr int kMountAttempts = 5;
+    constexpr OSTime kMountRetryDelayMs = 200;
+
+    bool mounted = false;
+    for (int attempt = 1; attempt <= kMountAttempts; attempt++) {
+        if (WHBMountSdCard()) {
+            mounted = true;
+            break;
+        }
+        WHBLogPrintf("HarnessDirPath: WHBMountSdCard() failed (attempt %d/%d)", attempt, kMountAttempts);
+        if (attempt < kMountAttempts) {
+            OSSleepTicks(OSMillisecondsToTicks(kMountRetryDelayMs));
+        }
+    }
+    if (!mounted) {
+        WHBLogPrint("HarnessDirPath: giving up on SD card mount after retries");
         return "";
     }
 
