@@ -8,6 +8,13 @@
 #if defined(__APPLE__)
 #include <pwd.h>
 #endif
+#if defined(__WIIU__)
+#include <whb/log.h>
+#include <whb/sdcard.h>
+#include <coreinit/thread.h>
+#include <coreinit/time.h>
+#include "ship/utils/filesystemtools/Directory.h"
+#endif
 #include "ship/install_config.h"
 #include "ship/config/ConsoleVariable.h"
 #include "ship/controller/controldeck/ControlDeck.h"
@@ -47,6 +54,42 @@ void ClearBridgeCachesIfPresent(Context* context) {
         bridge->ClearCaches();
     }
 }
+
+#if defined(__WIIU__)
+// Wii U has no SDL (and so no SDL_GetPrefPath()) to resolve and create a per-app writable
+// directory the way every other platform below does - this fills that gap the same way
+// SDL_GetPrefPath() does on the SDL platforms: mount whatever backs the path (the SD card
+// here), create the directory if it isn't there yet, and hand back an absolute path that's
+// guaranteed writable by the time this returns. WHBMountSdCard() isn't guaranteed to succeed
+// on the very first call right at boot - the console's SD/FS subsystem isn't always ready the
+// instant a process starts - so this retries a few times before giving up; a genuinely absent/
+// unmounted SD card still fails every attempt and gets logged rather than silently returning a
+// path nothing can actually write to.
+std::string WiiUAppDirectoryPath(const std::string& appName) {
+    constexpr int kMountAttempts = 5;
+    constexpr OSTime kMountRetryDelayMs = 200;
+
+    bool mounted = false;
+    for (int attempt = 1; attempt <= kMountAttempts; attempt++) {
+        if (WHBMountSdCard()) {
+            mounted = true;
+            break;
+        }
+        WHBLogPrintf("Context::GetAppDirectoryPath: WHBMountSdCard() failed (attempt %d/%d)", attempt, kMountAttempts);
+        if (attempt < kMountAttempts) {
+            OSSleepTicks(OSMillisecondsToTicks(kMountRetryDelayMs));
+        }
+    }
+    if (!mounted) {
+        WHBLogPrint("Context::GetAppDirectoryPath: giving up on SD card mount after retries");
+        return ".";
+    }
+
+    const std::string path = std::string(WHBGetSdCardMountPath()) + "wiiu/apps/" + appName + "/";
+    Directory::CreateDirectory(path);
+    return path;
+}
+#endif
 } // namespace
 
 // Release all bridge-cache shared_ptrs so components are not kept alive past this
@@ -320,6 +363,10 @@ std::string Context::GetAppBundlePath() {
 }
 
 std::string Context::GetAppDirectoryPath(const std::string& appName) {
+#if defined(__WIIU__)
+    return WiiUAppDirectoryPath(appName.empty() ? "libultraship" : appName);
+#endif
+
 #if defined(__ANDROID__)
     const char* externaldir = SDL_GetAndroidExternalStoragePath();
     if (externaldir != NULL) {
