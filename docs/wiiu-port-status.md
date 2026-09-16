@@ -50,8 +50,9 @@ unavailable on `CafeOS`:
 - **Ported GX2 graphics sources** — the GX2 renderer, Wii U window backend,
   GX2 shader generation/util, and the GX2 ImGui backends are re-homed into
   `src/fast/backends/` and `src/ship/port/wiiu/ImGui/`.
-- **CI** — `.github/workflows/build-wiiu.yml` cross-compiles inside the
-  `devkitpro/devkitppc` container.
+- **CI** — the `build-wiiu` job in `.github/workflows/build-validation.yml`
+  cross-compiles inside the `devkitpro/devkitppc` container (compile check
+  only; no artifacts).
 
 ## Status
 

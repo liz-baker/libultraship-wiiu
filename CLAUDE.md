@@ -23,9 +23,10 @@ remaining work.
   (`ship/port/wiiu/WiiUInput.h`), with built-in Wii U defaults; audio plays
   through a native AX player (`AudioBackend::AX`). Not yet covered: DRC gyro
   and the touch screen (see [issue #19](https://github.com/liz-baker/libultraship-wiiu/issues/19)).
-- **CI.** `build-wiiu` cross-compiles the console library and is blocking on
-  PRs alongside the desktop `build-validation` / `test-validation` matrix and
-  `tidy-format-validation`.
+- **CI.** The `build-wiiu` job in `build-validation.yml` cross-compiles the
+  console library and is blocking on PRs alongside the desktop matrix,
+  `test-validation`, and `tidy-format-validation`. It doesn't publish
+  artifacts — it's a compile check only.
 
 Gyro has an existing interface waiting for a backend (`ControllerGyroMapping`,
 mirroring the `mapping/wiiu/` pattern already used for buttons/axis-direction/
