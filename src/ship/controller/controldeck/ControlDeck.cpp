@@ -93,6 +93,9 @@ bool ControlDeck::GamepadGameInputBlocked() {
 
 bool ControlDeck::KeyboardGameInputBlocked() {
     // block keyboard input when typing in imgui
+    if (ImGui::GetCurrentContext() == NULL) {
+        return true;
+    }
     ImGuiWindow* activeIDWindow = ImGui::GetCurrentContext()->ActiveIdWindow;
     return AllGameInputBlocked() ||
            (activeIDWindow != NULL && activeIDWindow->ID != GetWindow()->GetGui()->GetMainGameWindowID()) ||
@@ -101,6 +104,9 @@ bool ControlDeck::KeyboardGameInputBlocked() {
 
 bool ControlDeck::MouseGameInputBlocked() {
     // block mouse input when user interacting with gui
+    if (ImGui::GetCurrentContext() == NULL) {
+        return true;
+    }
     ImGuiWindow* window = ImGui::GetCurrentContext()->HoveredWindow;
     if (window == NULL) {
         return true;
