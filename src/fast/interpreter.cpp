@@ -90,6 +90,10 @@ static constexpr std::array ucode_attr_handlers = {
     &f3dexAttrHandler,  // ucode_f3exb
     &f3dex2AttrHandler, // ucode_f3ex2
     &f3dex2AttrHandler, // ucode_s2dex
+    // F3DEX's attr table, not F3DEX2's - see the audit finding on indyGeHandlers/indyPdHandlers
+    // in interpreter.cpp: the Indy engine's active opcode numbering is F3DEX/F3D-family.
+    &f3dexAttrHandler, // ucode_indy_ge
+    &f3dexAttrHandler, // ucode_indy_pd
 };
 
 static uint32_t get_attr(Attribute attr) {
@@ -3939,6 +3943,125 @@ bool gfx_quad_handler_f3dex(F3DGfx** cmd0) {
     return false;
 }
 
+// Rare "Indy" engine (GE/PD) G_TRI4: four triangles packed as 4-bit vertex-buffer indices
+// across w0/w1. Ported from gfx_sp_tri4() in goldeneye-pc-port's and perfect_dark's
+// port/fast3d/gfx_pc.cpp (identical in both) - MIT-licensed `fast3d` engine, (c) 2020 Emill &
+// MaikelChan; see issue #28's licensing section and fast/indy.h. For triangle i (0-3): x = bits
+// [8i, 8i+4) of w1, y = bits [8i+4, 8i+8) of w1, z = bits [4i, 4i+4) of w0. A triangle whose
+// three vertex indices are all 0 is a padding slot (real display lists use G_TRI4 for quads,
+// which only need 2 of the 4 triangle slots) and is not drawn, matching gfx_sp_tri4()'s
+// `if (x || y || z)` guard.
+IndyTri4Vertices DecodeIndyTri4Vertices(uint32_t w0, uint32_t w1) {
+    IndyTri4Vertices triangles;
+    for (uint32_t i = 0; i < triangles.size(); ++i) {
+        uint8_t x = (uint8_t)((w1 >> (8 * i)) & 0xF);
+        uint8_t y = (uint8_t)((w1 >> (8 * i + 4)) & 0xF);
+        uint8_t z = (uint8_t)((w0 >> (4 * i)) & 0xF);
+        triangles[i] = { x, y, z };
+    }
+    return triangles;
+}
+
+bool IsIndyTri4TriangleDrawn(const std::array<uint8_t, 3>& triangle) {
+    return !(triangle[0] == 0 && triangle[1] == 0 && triangle[2] == 0);
+}
+
+bool gfx_tri4_handler_indy(F3DGfx** cmd0) {
+    Interpreter* gfx = mInstance.lock().get();
+    F3DGfx* cmd = *cmd0;
+
+    const IndyTri4Vertices triangles = DecodeIndyTri4Vertices((uint32_t)cmd->words.w0, (uint32_t)cmd->words.w1);
+    for (const auto& triangle : triangles) {
+        if (!IsIndyTri4TriangleDrawn(triangle)) {
+            continue;
+        }
+        gfx->GfxSpTri1(triangle[0], triangle[1], triangle[2], false);
+    }
+
+    return false;
+}
+
+// GE-only custom texture-bank selection (gsSPUseTexture). goldeneye-pc-port's own gfx_pc.cpp
+// treats this opcode as a no-op with the finding: "the game never emits it, so treating it as
+// a no-op is safe" - confirmed by reading that port's dispatch switch directly. A true no-op,
+// not a stand-in for missing decode logic. See issue #28.
+bool gfx_settex_handler_indy_ge(F3DGfx** cmd0) {
+    return false;
+}
+
+// PD-only vertex-colour-table DMA (gsSPVertexColors). Ported from
+// gfx_sp_set_vertex_colors()/its G_COL case in perfect_dark's port/fast3d/gfx_pc.cpp: stores
+// the segment-resolved table pointer for gfx_vtx_handler_indy_pd() to index per-vertex. The
+// count field (w0 bits[0,16)/4) is decoded for documentation parity with the real macro
+// (gsSPVertexColors) but otherwise unused - PD's own gfx_pc.cpp never checks it either
+// (its SUPPORT_CHECK on count is commented out there). See issue #28.
+bool gfx_col_handler_indy_pd(F3DGfx** cmd0) {
+    Interpreter* gfx = mInstance.lock().get();
+    F3DGfx* cmd = *cmd0;
+
+    gfx->mRsp->indy_pd_vertex_colors = (const uint8_t*)gfx->SegAddr(cmd->words.w1);
+
+    return false;
+}
+
+// Perfect Dark's own G_VTX. PD's Vtx (include/PR/gbi.h in perfect_dark) is its own 12-byte
+// struct - {s16 x,y,z; u8 flags; u8 colour; s16 s,t} - not the standard 16-byte F3DEX2 layout,
+// with colour resolved indirectly through G_COL's table (colour >> 2, 4-byte entries) instead
+// of carried inline. Adapts each vertex into a synthetic F3DVtx and reuses the existing
+// GfxSpVertex() pipeline rather than duplicating its lighting/fog/clip logic: F3DVtx's cn[4]
+// (colour path) and n[3]+a (normal path) alias the same 4 bytes, and PD's own NormalColor union
+// aliases r/g/b/a onto x/y/z/w at the same offsets - so copying the resolved table entry's raw
+// bytes into cn[0..3] is correct under either interpretation without branching on lighting
+// state here. See issue #28 and fast/indy.h.
+struct IndyPdVtx {
+    int16_t x, y, z;
+    uint8_t flags;
+    uint8_t colour;
+    int16_t s, t;
+};
+static_assert(sizeof(IndyPdVtx) == 12, "PD's Vtx is a packed 12 bytes on real hardware");
+
+bool gfx_vtx_handler_indy_pd(F3DGfx** cmd0) {
+    Interpreter* gfx = mInstance.lock().get();
+    F3DGfx* cmd = *cmd0;
+
+    size_t n_vertices = C0(0, 16) / sizeof(IndyPdVtx);
+    size_t dest_index = C0(16, 4);
+    // Defensive clamp against a malformed/adversarial display list - see issue #28's
+    // "Malformed/adversarial input handling" test-coverage item.
+    n_vertices = std::min(n_vertices, (size_t)(MAX_VERTICES + 4));
+
+    const IndyPdVtx* verts = (const IndyPdVtx*)gfx->SegAddr(cmd->words.w1);
+    const uint8_t* colorTable = gfx->mRsp->indy_pd_vertex_colors;
+
+    std::array<F3DVtx, MAX_VERTICES + 4> tempVerts{};
+    for (size_t i = 0; i < n_vertices; i++) {
+        const IndyPdVtx& v = verts[i];
+        F3DVtx_t& out = tempVerts[i].v;
+
+        out.ob[0] = v.x;
+        out.ob[1] = v.y;
+        out.ob[2] = v.z;
+        out.flag = 0;
+        out.tc[0] = v.s;
+        out.tc[1] = v.t;
+
+        if (colorTable != nullptr) {
+            const uint8_t* entry = colorTable + (v.colour & ~0x3);
+            out.cn[0] = entry[0];
+            out.cn[1] = entry[1];
+            out.cn[2] = entry[2];
+            out.cn[3] = entry[3];
+        } else {
+            out.cn[0] = out.cn[1] = out.cn[2] = out.cn[3] = 0;
+        }
+    }
+
+    gfx->GfxSpVertex(n_vertices, dest_index, tempVerts.data());
+
+    return false;
+}
+
 bool gfx_othermode_l_handler_f3dex2(F3DGfx** cmd0) {
     Interpreter* gfx = mInstance.lock().get();
     F3DGfx* cmd = *cmd0;
@@ -4841,6 +4964,85 @@ static constexpr UcodeHandler s2dexHandlers = {
     { F3DEX2_G_ENDDL, { "G_ENDDL", gfx_end_dl_handler_common } },
 };
 
+// Rare "Indy" engine, GoldenEye 007 variant.
+//
+// AUDIT FINDING (issue #28's "full audit" scope item, partially resolved): the previous version
+// of this table inherited F3DEX2's opcode numbering as an "unaudited baseline." That assumption
+// was wrong. GE's own include/PR/gbi.h guards its opcode numbering behind `#ifdef F3DEX_GBI_2`
+// (our F3DEX2's numbering) with an `#else` branch (our F3DEX/F3D's low+high range numbering) -
+// and F3DEX_GBI_2 is never defined anywhere in goldeneye-pc-port's build, so GE's ACTIVE opcode
+// numbering is the `#else` branch: G_MTX=1, G_MOVEMEM=3, G_VTX=4, G_DL=6, G_TRI1=0xbf, etc. -
+// matching our existing F3DEX_* constants (fast/f3dex.h), not F3DEX2_*. Confirmed opcode-by-
+// opcode against goldeneye-pc-port's port/fast3d/gfx_pc.cpp dispatch switch: every reused
+// handler below (gfx_mtx_handler_f3d, gfx_movemem_handler_f3d, gfx_moveword_handler_f3d,
+// gfx_texture_handler_f3d, gfx_vtx_handler_f3d, gfx_tri1_handler_f3d,
+// gfx_set/clear_geometry_mode_handler_f3d, gfx_othermode_l/h_handler_f3d) is a byte-for-byte
+// match of that port's real argument-decode formulas.
+//
+// G_CULLDL/G_POPMTX are NOT included: perfect_dark's disassembled RSP dispatch table
+// (src/rsp/gsp.s, see indyPdHandlers below) confirms both slots are hard-wired to sp_noop in
+// the shared Indy engine base, and GE's own header (F3DEX_GBI also off) doesn't define distinct
+// opcodes for them either - real display lists never emit them. Still unconfirmed for GE
+// specifically (only cross-checked against PD's labeled disassembly): the full gmain.s/gsp.s
+// audit is open for GE's own low-range custom extensions beyond G_TRI4/G_SETTEX, since GE and
+// PD "independently extended a shared base in a different direction" per issue #28.
+// Note: F3DEX_G_NOOP and INDY_G_SETTEX are both 0xc0 - GE's own header separately names this
+// same opcode slot "G_SETTEX" (gsSPUseTexture); see fast/indy.h for why it's inert on real
+// hardware either way (RDP-passthrough, not an RSP-intercepted no-op). One entry, not two:
+// INDY_G_SETTEX below covers it, since it documents the more specific (if never-emitted)
+// meaning; a second literal F3DEX_G_NOOP entry at the same key would just silently overwrite it
+// in the handler array.
+static constexpr UcodeHandler indyGeHandlers = {
+    { F3DEX_G_SPNOOP, { "G_SPNOOP", gfx_noop_handler_f3dex2 } },
+    { F3DEX_G_MTX, { "G_MTX", gfx_mtx_handler_f3d } },
+    { F3DEX_G_MOVEMEM, { "G_MOVEMEM", gfx_movemem_handler_f3d } },
+    { F3DEX_G_VTX, { "G_VTX", gfx_vtx_handler_f3d } },
+    { F3DEX_G_DL, { "G_DL", gfx_dl_handler_common } },
+    { F3DEX_G_ENDDL, { "G_ENDDL", gfx_end_dl_handler_common } },
+    { F3DEX_G_SETGEOMETRYMODE, { "G_SETGEOMETRYMODE", gfx_set_geometry_mode_handler_f3d } },
+    { F3DEX_G_CLEARGEOMETRYMODE, { "G_CLEARGEOMETRYMODE", gfx_clear_geometry_mode_handler_f3d } },
+    { F3DEX_G_TRI1, { "G_TRI1", gfx_tri1_handler_f3d } },
+    { F3DEX_G_SETOTHERMODE_L, { "G_SETOTHERMODE_L", gfx_othermode_l_handler_f3d } },
+    { F3DEX_G_SETOTHERMODE_H, { "G_SETOTHERMODE_H", gfx_othermode_h_handler_f3d } },
+    { F3DEX_G_TEXTURE, { "G_TEXTURE", gfx_texture_handler_f3d } },
+    { F3DEX_G_MOVEWORD, { "G_MOVEWORD", gfx_moveword_handler_f3d } },
+    { INDY_G_TRI4, { "G_TRI4", gfx_tri4_handler_indy } },
+    { INDY_G_SETTEX, { "G_SETTEX", gfx_settex_handler_indy_ge } },
+};
+
+// Rare "Indy" engine, Perfect Dark variant.
+//
+// Same base-opcode-numbering correction as indyGeHandlers above, but here it's directly and
+// fully confirmed rather than cross-checked by inference: perfect_dark's src/rsp/gsp.s is a
+// symbolically labeled RSP disassembly with an explicit jump table
+// (dma_dispatch_table/imm_dispatch_table) naming every opcode by its real handler, e.g.
+// `/* cmd 04 */ .dh dma_vtx` and `/* cmd b1 */ .dh imm_tri4 // new in PD`, with
+// `imm_popmtx removed in PD` / `imm_culldl removed in PD` comments confirming those two slots
+// are dead. PD's own include/PR/gbi.h #defines match this table exactly (G_MTX=1, G_MOVEMEM=3,
+// G_VTX=4, G_DL=6, G_COL=7 "new in PD", G_TRI4=(G_IMMFIRST-14)=0xb1 "new in PD" replacing the
+// old G_TRI2 slot, G_POPMTX/G_CULLDL literally #defined to 0 as inert placeholders). G_COL
+// replaces F3DEX_G_RESERVED2 (0x07, unused in stock F3DEX) at the same slot. G_VTX is
+// PD-specific (its own 12-byte Vtx, colour resolved through G_COL's table - see
+// gfx_vtx_handler_indy_pd). PD has no G_SETTEX.
+static constexpr UcodeHandler indyPdHandlers = {
+    { F3DEX_G_SPNOOP, { "G_SPNOOP", gfx_noop_handler_f3dex2 } },
+    { F3DEX_G_NOOP, { "G_NOOP", gfx_noop_handler_f3dex2 } },
+    { F3DEX_G_MTX, { "G_MTX", gfx_mtx_handler_f3d } },
+    { F3DEX_G_MOVEMEM, { "G_MOVEMEM", gfx_movemem_handler_f3d } },
+    { F3DEX_G_VTX, { "G_VTX", gfx_vtx_handler_indy_pd } },
+    { F3DEX_G_DL, { "G_DL", gfx_dl_handler_common } },
+    { F3DEX_G_ENDDL, { "G_ENDDL", gfx_end_dl_handler_common } },
+    { F3DEX_G_SETGEOMETRYMODE, { "G_SETGEOMETRYMODE", gfx_set_geometry_mode_handler_f3d } },
+    { F3DEX_G_CLEARGEOMETRYMODE, { "G_CLEARGEOMETRYMODE", gfx_clear_geometry_mode_handler_f3d } },
+    { F3DEX_G_TRI1, { "G_TRI1", gfx_tri1_handler_f3d } },
+    { F3DEX_G_SETOTHERMODE_L, { "G_SETOTHERMODE_L", gfx_othermode_l_handler_f3d } },
+    { F3DEX_G_SETOTHERMODE_H, { "G_SETOTHERMODE_H", gfx_othermode_h_handler_f3d } },
+    { F3DEX_G_TEXTURE, { "G_TEXTURE", gfx_texture_handler_f3d } },
+    { F3DEX_G_MOVEWORD, { "G_MOVEWORD", gfx_moveword_handler_f3d } },
+    { INDY_G_TRI4, { "G_TRI4", gfx_tri4_handler_indy } },
+    { INDY_G_COL, { "G_COL", gfx_col_handler_indy_pd } },
+};
+
 static constexpr std::array ucode_handlers = {
     &f3dHandlers,    // ucode_f3db
     &f3dHandlers,    // ucode_f3d
@@ -4848,6 +5050,8 @@ static constexpr std::array ucode_handlers = {
     &f3dexHandlers,  // ucode_f3dexb
     &f3dex2Handlers, // ucode_f3dex2
     &s2dexHandlers,  // ucode_s2dex
+    &indyGeHandlers, // ucode_indy_ge
+    &indyPdHandlers, // ucode_indy_pd
 };
 
 const char* GfxGetOpcodeName(int8_t opcode) {
@@ -4888,6 +5092,8 @@ static void gfx_set_ucode_handler(UcodeHandlers ucode) {
         case ucode_f3dex:
         case ucode_f3dexb:
         case ucode_f3dex2:
+        case ucode_indy_ge:
+        case ucode_indy_pd:
             gfx->mRsp->fog_mul = 0;
             gfx->mRsp->fog_offset = 0;
             break;

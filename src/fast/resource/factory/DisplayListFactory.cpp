@@ -157,7 +157,9 @@ int8_t GetEndOpcodeByUCode(UcodeHandlers ucode) {
         case ucode_f3dexb:
             return F3DEX_G_ENDDL;
         case ucode_f3dex2:
-        case ucode_s2dex: {
+        case ucode_s2dex:
+        case ucode_indy_ge:
+        case ucode_indy_pd: {
             return F3DEX2_G_ENDDL;
         }
         case ucode_max:
