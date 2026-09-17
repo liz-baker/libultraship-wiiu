@@ -85,8 +85,16 @@ std::string WiiUAppDirectoryPath(const std::string& appName) {
         return ".";
     }
 
-    const std::string path = std::string(WHBGetSdCardMountPath()) + "wiiu/apps/" + appName + "/";
+    // WHBGetSdCardMountPath() has no trailing slash (e.g. "/vol/external01").
+    const std::string path = std::string(WHBGetSdCardMountPath()) + "/wiiu/apps/" + appName + "/";
+
+    // CreateDirectory() swallows its own failures, so confirm the directory actually exists
+    // before treating this path as guaranteed-writable.
     Directory::CreateDirectory(path);
+    if (!Directory::Exists(path)) {
+        WHBLogPrintf("Context::GetAppDirectoryPath: failed to create %s", path.c_str());
+        return ".";
+    }
     return path;
 }
 #endif
