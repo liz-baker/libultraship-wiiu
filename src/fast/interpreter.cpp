@@ -90,6 +90,7 @@ static constexpr std::array ucode_attr_handlers = {
     &f3dexAttrHandler,  // ucode_f3exb
     &f3dex2AttrHandler, // ucode_f3ex2
     &f3dex2AttrHandler, // ucode_s2dex
+    &f3dex2AttrHandler, // ucode_indy - geometry-mode cull bits are unaudited, F3DEX2's assumed for now
 };
 
 static uint32_t get_attr(Attribute attr) {
@@ -3939,6 +3940,56 @@ bool gfx_quad_handler_f3dex(F3DGfx** cmd0) {
     return false;
 }
 
+// Rare "Indy" engine (GE/PD) G_TRI4: four triangles packed as 4-bit vertex-buffer indices
+// across w0/w1, mirroring the classic gsSP1Triangle4(v0..v11, flag) macro shape. A triangle
+// whose three vertex indices are all 0 is a padding slot, not a real triangle at vertex 0
+// three times over, and is not drawn - this is the one behavior both GE's and PD's decomp
+// headers document explicitly (see issue #28). Not yet validated against either game's real
+// RSP dispatch table (rsp/graphics/gmain.s) - see the still-open audit item on that issue.
+IndyTri4Vertices DecodeIndyTri4Vertices(uint32_t w0, uint32_t w1) {
+    return { {
+        { (uint8_t)((w0 >> 12) & 0xF), (uint8_t)((w0 >> 8) & 0xF), (uint8_t)((w0 >> 4) & 0xF) },
+        { (uint8_t)(w0 & 0xF), (uint8_t)((w1 >> 28) & 0xF), (uint8_t)((w1 >> 24) & 0xF) },
+        { (uint8_t)((w1 >> 20) & 0xF), (uint8_t)((w1 >> 16) & 0xF), (uint8_t)((w1 >> 12) & 0xF) },
+        { (uint8_t)((w1 >> 8) & 0xF), (uint8_t)((w1 >> 4) & 0xF), (uint8_t)(w1 & 0xF) },
+    } };
+}
+
+bool IsIndyTri4TriangleDrawn(const std::array<uint8_t, 3>& triangle) {
+    return !(triangle[0] == 0 && triangle[1] == 0 && triangle[2] == 0);
+}
+
+bool gfx_tri4_handler_indy(F3DGfx** cmd0) {
+    Interpreter* gfx = mInstance.lock().get();
+    F3DGfx* cmd = *cmd0;
+
+    const IndyTri4Vertices triangles = DecodeIndyTri4Vertices((uint32_t)cmd->words.w0, (uint32_t)cmd->words.w1);
+    for (const auto& triangle : triangles) {
+        if (!IsIndyTri4TriangleDrawn(triangle)) {
+            continue;
+        }
+        gfx->GfxSpTri1(triangle[0], triangle[1], triangle[2], false);
+    }
+
+    return false;
+}
+
+// GE-only custom texture-bank selection. Not implemented: Fast3D has no texture-bank concept
+// to hang this off of yet, and the bank-index encoding hasn't been audited against GE's real
+// ucode. Stubbed rather than guessed at, so a GE display list decodes past it instead of
+// desyncing the command stream. See issue #28.
+bool gfx_settex_handler_indy(F3DGfx** cmd0) {
+    return false;
+}
+
+// PD-only vertex-colour-table DMA. Not implemented: needs a vertex-colour-table store this
+// interpreter doesn't have yet, and the DMA layout hasn't been audited against PD's real
+// ucode. Stubbed rather than guessed at, so a PD display list decodes past it instead of
+// desyncing the command stream. See issue #28.
+bool gfx_col_handler_indy(F3DGfx** cmd0) {
+    return false;
+}
+
 bool gfx_othermode_l_handler_f3dex2(F3DGfx** cmd0) {
     Interpreter* gfx = mInstance.lock().get();
     F3DGfx* cmd = *cmd0;
@@ -4841,6 +4892,32 @@ static constexpr UcodeHandler s2dexHandlers = {
     { F3DEX2_G_ENDDL, { "G_ENDDL", gfx_end_dl_handler_common } },
 };
 
+// Rare "Indy" engine (GE/PD) ucode. Inherits F3DEX2's control-flow/matrix/vertex-load opcodes
+// as an unaudited baseline (see issue #28's still-open full-audit item) and overrides only the
+// three opcodes confirmed to diverge: G_TRI4 (shared), GE's G_SETTEX, and PD's G_COL, which
+// replaces F3DEX2_G_QUAD at the same opcode slot since the Indy ucode doesn't expose G_QUAD.
+static constexpr UcodeHandler indyHandlers = {
+    { F3DEX2_G_NOOP, { "G_NOOP", gfx_noop_handler_f3dex2 } },
+    { F3DEX2_G_SPNOOP, { "G_SPNOOP", gfx_noop_handler_f3dex2 } },
+    { F3DEX2_G_CULLDL, { "G_CULLDL", gfx_cull_dl_handler_f3dex2 } },
+    { F3DEX2_G_MTX, { "G_MTX", gfx_mtx_handler_f3dex2 } },
+    { F3DEX2_G_POPMTX, { "G_POPMTX", gfx_pop_mtx_handler_f3dex2 } },
+    { F3DEX2_G_MOVEMEM, { "G_MOVEMEM", gfx_movemem_handler_f3dex2 } },
+    { F3DEX2_G_MOVEWORD, { "G_MOVEWORD", gfx_moveword_handler_f3dex2 } },
+    { F3DEX2_G_TEXTURE, { "G_TEXTURE", gfx_texture_handler_f3dex2 } },
+    { F3DEX2_G_VTX, { "G_VTX", gfx_vtx_handler_f3dex2 } },
+    { F3DEX2_G_MODIFYVTX, { "G_MODIFYVTX", gfx_modify_vtx_handler_f3dex2 } },
+    { F3DEX2_G_DL, { "G_DL", gfx_dl_handler_common } },
+    { F3DEX2_G_ENDDL, { "G_ENDDL", gfx_end_dl_handler_common } },
+    { F3DEX2_G_GEOMETRYMODE, { "G_GEOMETRYMODE", gfx_geometry_mode_handler_f3dex2 } },
+    { F3DEX2_G_TRI1, { "G_TRI1", gfx_tri1_handler_f3dex2 } },
+    { F3DEX2_G_SETOTHERMODE_L, { "G_SETOTHERMODE_L", gfx_othermode_l_handler_f3dex2 } },
+    { F3DEX2_G_SETOTHERMODE_H, { "G_SETOTHERMODE_H", gfx_othermode_h_handler_f3dex2 } },
+    { INDY_G_TRI4, { "G_TRI4", gfx_tri4_handler_indy } },
+    { INDY_G_SETTEX, { "G_SETTEX", gfx_settex_handler_indy } },
+    { INDY_G_COL, { "G_COL", gfx_col_handler_indy } },
+};
+
 static constexpr std::array ucode_handlers = {
     &f3dHandlers,    // ucode_f3db
     &f3dHandlers,    // ucode_f3d
@@ -4848,6 +4925,7 @@ static constexpr std::array ucode_handlers = {
     &f3dexHandlers,  // ucode_f3dexb
     &f3dex2Handlers, // ucode_f3dex2
     &s2dexHandlers,  // ucode_s2dex
+    &indyHandlers,   // ucode_indy
 };
 
 const char* GfxGetOpcodeName(int8_t opcode) {
@@ -4888,6 +4966,7 @@ static void gfx_set_ucode_handler(UcodeHandlers ucode) {
         case ucode_f3dex:
         case ucode_f3dexb:
         case ucode_f3dex2:
+        case ucode_indy:
             gfx->mRsp->fog_mul = 0;
             gfx->mRsp->fog_offset = 0;
             break;

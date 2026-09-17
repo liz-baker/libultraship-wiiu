@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <array>
 #include <unordered_map>
 #include <map>
 #include <list>
@@ -583,6 +584,13 @@ void gfx_push_current_dir(char* path);
 int32_t gfx_check_image_signature(const char* imgData);
 const char* gfx_get_shader(int16_t id);
 const char* GfxGetOpcodeName(int8_t opcode);
+
+// Pure decode helpers for the Rare "Indy" engine (GE/PD) G_TRI4 opcode - split out from the
+// ucode_handlers table entry so they're unit-testable without an Interpreter instance.
+// See issue #28 and fast/indy.h.
+using IndyTri4Vertices = std::array<std::array<uint8_t, 3>, 4>;
+IndyTri4Vertices DecodeIndyTri4Vertices(uint32_t w0, uint32_t w1);
+bool IsIndyTri4TriangleDrawn(const std::array<uint8_t, 3>& triangle);
 
 } // namespace Fast
 

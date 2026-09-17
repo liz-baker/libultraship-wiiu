@@ -5,6 +5,7 @@ namespace Fast {
 
 #include "f3dex.h"
 #include "f3dex2.h"
+#include "indy.h"
 
 /* RDP commands: */
 constexpr int8_t RDP_G_SETCIMG = OPCODE(0xff);         /*  -1 */
