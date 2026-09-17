@@ -1,5 +1,7 @@
 #include "ship/window/gui/resource/GuiTexture.h"
 
+#include <stb_image.h>
+
 namespace Ship {
 GuiTexture::GuiTexture() : Resource(std::shared_ptr<ResourceInitData>()) {
 }
