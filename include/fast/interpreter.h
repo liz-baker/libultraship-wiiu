@@ -263,6 +263,11 @@ struct RSP {
     } texture_scaling_factor;
 
     struct LoadedVertex loaded_vertices[MAX_VERTICES + 4];
+
+    // Perfect Dark's Indy-engine G_COL: segment-resolved pointer to a table of 4-byte
+    // colour/normal entries, indexed by a per-vertex `colour >> 2` from PD's own Vtx struct.
+    // Set by gfx_col_handler_indy_pd, read by gfx_vtx_handler_indy_pd. See issue #28.
+    const uint8_t* indy_pd_vertex_colors = nullptr;
 };
 
 struct RDP {
