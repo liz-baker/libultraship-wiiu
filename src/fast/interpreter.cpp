@@ -3941,18 +3941,22 @@ bool gfx_quad_handler_f3dex(F3DGfx** cmd0) {
 }
 
 // Rare "Indy" engine (GE/PD) G_TRI4: four triangles packed as 4-bit vertex-buffer indices
-// across w0/w1, mirroring the classic gsSP1Triangle4(v0..v11, flag) macro shape. A triangle
-// whose three vertex indices are all 0 is a padding slot, not a real triangle at vertex 0
-// three times over, and is not drawn - this is the one behavior both GE's and PD's decomp
-// headers document explicitly (see issue #28). Not yet validated against either game's real
-// RSP dispatch table (rsp/graphics/gmain.s) - see the still-open audit item on that issue.
+// across w0/w1. Ported from gfx_sp_tri4() in goldeneye-pc-port's and perfect_dark's
+// port/fast3d/gfx_pc.cpp (identical in both) - MIT-licensed `fast3d` engine, (c) 2020 Emill &
+// MaikelChan; see issue #28's licensing section and fast/indy.h. For triangle i (0-3): x = bits
+// [8i, 8i+4) of w1, y = bits [8i+4, 8i+8) of w1, z = bits [4i, 4i+4) of w0. A triangle whose
+// three vertex indices are all 0 is a padding slot (real display lists use G_TRI4 for quads,
+// which only need 2 of the 4 triangle slots) and is not drawn, matching gfx_sp_tri4()'s
+// `if (x || y || z)` guard.
 IndyTri4Vertices DecodeIndyTri4Vertices(uint32_t w0, uint32_t w1) {
-    return { {
-        { (uint8_t)((w0 >> 12) & 0xF), (uint8_t)((w0 >> 8) & 0xF), (uint8_t)((w0 >> 4) & 0xF) },
-        { (uint8_t)(w0 & 0xF), (uint8_t)((w1 >> 28) & 0xF), (uint8_t)((w1 >> 24) & 0xF) },
-        { (uint8_t)((w1 >> 20) & 0xF), (uint8_t)((w1 >> 16) & 0xF), (uint8_t)((w1 >> 12) & 0xF) },
-        { (uint8_t)((w1 >> 8) & 0xF), (uint8_t)((w1 >> 4) & 0xF), (uint8_t)(w1 & 0xF) },
-    } };
+    IndyTri4Vertices triangles;
+    for (uint32_t i = 0; i < triangles.size(); ++i) {
+        uint8_t x = (uint8_t)((w1 >> (8 * i)) & 0xF);
+        uint8_t y = (uint8_t)((w1 >> (8 * i + 4)) & 0xF);
+        uint8_t z = (uint8_t)((w0 >> (4 * i)) & 0xF);
+        triangles[i] = { x, y, z };
+    }
+    return triangles;
 }
 
 bool IsIndyTri4TriangleDrawn(const std::array<uint8_t, 3>& triangle) {
@@ -3974,18 +3978,21 @@ bool gfx_tri4_handler_indy(F3DGfx** cmd0) {
     return false;
 }
 
-// GE-only custom texture-bank selection. Not implemented: Fast3D has no texture-bank concept
-// to hang this off of yet, and the bank-index encoding hasn't been audited against GE's real
-// ucode. Stubbed rather than guessed at, so a GE display list decodes past it instead of
-// desyncing the command stream. See issue #28.
+// GE-only custom texture-bank selection (gsSPUseTexture). goldeneye-pc-port's own gfx_pc.cpp
+// treats this opcode as a no-op with the finding: "the game never emits it, so treating it as
+// a no-op is safe" - confirmed by reading that port's dispatch switch directly. A true no-op,
+// not a stand-in for missing decode logic. See issue #28.
 bool gfx_settex_handler_indy(F3DGfx** cmd0) {
     return false;
 }
 
-// PD-only vertex-colour-table DMA. Not implemented: needs a vertex-colour-table store this
-// interpreter doesn't have yet, and the DMA layout hasn't been audited against PD's real
-// ucode. Stubbed rather than guessed at, so a PD display list decodes past it instead of
-// desyncing the command stream. See issue #28.
+// PD-only vertex-colour-table DMA (gsSPVertexColors). perfect_dark's port/fast3d/gfx_pc.cpp
+// decodes this as: count = bits[0,16) of w0 / 4, table = seg_addr(w1); stores the table
+// pointer, and PD's own G_VTX handler indexes into it per-vertex via `vertex_colour_index / 4`
+// read from the vertex data. Not implemented here: storing the table pointer alone would be
+// dead code, since this interpreter's single shared G_VTX handler (gfx_vtx_handler_f3dex2,
+// reused above) reads colour/normal data inline off F3DEX2's Vtx layout, not PD's - wiring
+// G_COL up for real needs a PD-specific vertex load, not just this opcode. See issue #28.
 bool gfx_col_handler_indy(F3DGfx** cmd0) {
     return false;
 }
