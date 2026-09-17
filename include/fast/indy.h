@@ -65,6 +65,14 @@
 // are confirmed for PD directly and for GE only by matching argument-decode formulas in its own
 // gfx_pc.cpp - not by a symbol-level disassembly audit of GE's own microcode.
 //
+// DECISION (issue #28 scope item 5): PD's `#ifndef PLATFORM_N64`-guarded opcode block in
+// gbiex.h (G_SETFB_EXT, G_COPYFB_EXT, G_TEXRECT_WIDE_EXT, etc.) is excluded from this table
+// entirely, on purpose. Those are perfect_dark's own PC-port-invented rendering enhancements -
+// never emitted by real Indy-engine microcode - so they're both out of scope for native-ucode
+// support and irrelevant to libultraship generally (no real N64 microcode ever emits them,
+// unlike everything else in this table). indyPdHandlers above simply never lists them; this
+// isn't an oversight.
+//
 // This adapted dispatch logic originates in Emill & MaikelChan's MIT-licensed `fast3d` project
 // (2020) - see port/fast3d/LICENSE.txt in either PC port repo, both copyright Emill/MaikelChan
 // 2020 verbatim. Credit goldeneye-pc-port (Dansereau) and perfect_dark (Dwyer) separately for
