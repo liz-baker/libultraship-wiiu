@@ -28,10 +28,18 @@
 //                        gfx_pc.cpp. Replaces the old G_TRI2 slot (F3DEX_GBI off means neither
 //                        game's ucode has G_TRI2 in the first place). Ported below - see
 //                        DecodeIndyTri4Vertices() in interpreter.cpp.
-//   - G_SETTEX  (0xc0): GE-only, custom texture-bank selection (gsSPUseTexture). Also F3DEX's
-//                        universal G_NOOP slot - goldeneye-pc-port's own gfx_pc.cpp treats it
-//                        as a no-op, with the finding that real GE game data never emits it.
-//                        Implemented as a no-op on that basis, not stubbed out of caution.
+//   - G_SETTEX  (0xc0): GE-only, custom texture-bank selection (gsSPUseTexture). 0xc0 isn't an
+//                        RSP-intercepted no-op opcode the way earlier notes here put it - per
+//                        PD's gsp.s, an opcode's top 2 bits pick one of four RSP dispatch
+//                        quadrants (DMA / universal-noop / immediate / RDP-passthrough), and
+//                        0xc0 falls in the RDP-passthrough one: the RSP forwards it to the RDP
+//                        command stream as-is (dispatch_rdp only patches segmented addresses for
+//                        the SETIMG family, 0xfd-0xff), where it's simply an unrecognized byte
+//                        with no defined effect on real hardware. Same net behavior (does
+//                        nothing), different mechanism than "the RSP treats this as G_NOOP."
+//                        goldeneye-pc-port's own gfx_pc.cpp treats it as a no-op with the
+//                        finding that real GE game data never emits it - implemented as a
+//                        no-op here on that basis, not stubbed out of caution.
 //   - G_COL     (0x07): PD-only, vertex-colour-table DMA (gsSPVertexColors). Replaces
 //                        F3DEX_G_RESERVED2 (unused in stock F3DEX) at the same opcode slot.
 //                        Confirmed decode: count = w0 bits[0,16)/4 (unused - PD's own

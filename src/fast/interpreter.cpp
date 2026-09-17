@@ -4987,9 +4987,11 @@ static constexpr UcodeHandler s2dexHandlers = {
 // audit is open for GE's own low-range custom extensions beyond G_TRI4/G_SETTEX, since GE and
 // PD "independently extended a shared base in a different direction" per issue #28.
 // Note: F3DEX_G_NOOP and INDY_G_SETTEX are both 0xc0 - GE's own header separately names this
-// same universal-noop slot "G_SETTEX" (gsSPUseTexture). One entry, not two: INDY_G_SETTEX below
-// covers it, since it documents the more specific (if never-emitted) meaning; a second literal
-// F3DEX_G_NOOP entry at the same key would just silently overwrite it in the handler array.
+// same opcode slot "G_SETTEX" (gsSPUseTexture); see fast/indy.h for why it's inert on real
+// hardware either way (RDP-passthrough, not an RSP-intercepted no-op). One entry, not two:
+// INDY_G_SETTEX below covers it, since it documents the more specific (if never-emitted)
+// meaning; a second literal F3DEX_G_NOOP entry at the same key would just silently overwrite it
+// in the handler array.
 static constexpr UcodeHandler indyGeHandlers = {
     { F3DEX_G_SPNOOP, { "G_SPNOOP", gfx_noop_handler_f3dex2 } },
     { F3DEX_G_MTX, { "G_MTX", gfx_mtx_handler_f3d } },
