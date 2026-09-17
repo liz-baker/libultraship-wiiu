@@ -4998,13 +4998,6 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
     mResourceManager = std::move(resourceManager);
     sResourceManager = mResourceManager;
     mConsoleVariable = std::move(consoleVariable);
-    // Run()/RunGuiOnly() dereference mGfxDebugger every frame; Fast3dWindow::Init() normally
-    // supplies one via SetGfxDebugger(), but a caller driving the class-based Interpreter API
-    // directly (no Fast3dWindow) never does, leaving it null. Default-construct one here so
-    // Run() always has a live debugger to query, same as Fast3dWindow does.
-    if (mGfxDebugger == nullptr) {
-        mGfxDebugger = std::make_shared<GfxDebugger>();
-    }
     mWapi->Init(game_name, rapi->GetName(), start_in_fullscreen, width, height, posX, posY);
     mRapi->Init();
     mRapi->UpdateFramebufferParameters(0, width, height, 1, false, true, true, true);
