@@ -90,8 +90,10 @@ static constexpr std::array ucode_attr_handlers = {
     &f3dexAttrHandler,  // ucode_f3exb
     &f3dex2AttrHandler, // ucode_f3ex2
     &f3dex2AttrHandler, // ucode_s2dex
-    &f3dex2AttrHandler, // ucode_indy_ge - geometry-mode cull bits are unaudited, F3DEX2's assumed for now
-    &f3dex2AttrHandler, // ucode_indy_pd - geometry-mode cull bits are unaudited, F3DEX2's assumed for now
+    // F3DEX's attr table, not F3DEX2's - see the audit finding on indyGeHandlers/indyPdHandlers
+    // in interpreter.cpp: the Indy engine's active opcode numbering is F3DEX/F3D-family.
+    &f3dexAttrHandler, // ucode_indy_ge
+    &f3dexAttrHandler, // ucode_indy_pd
 };
 
 static uint32_t get_attr(Attribute attr) {
@@ -4962,52 +4964,79 @@ static constexpr UcodeHandler s2dexHandlers = {
     { F3DEX2_G_ENDDL, { "G_ENDDL", gfx_end_dl_handler_common } },
 };
 
-// Rare "Indy" engine, GoldenEye 007 variant. Inherits F3DEX2's control-flow/matrix/vertex-load
-// opcodes as an unaudited baseline (see issue #28's still-open full-audit item) and overrides
-// only the opcodes confirmed to diverge: G_TRI4 and G_SETTEX (a confirmed no-op). GE's Vtx is
-// byte-identical to F3DEX2's, so G_VTX is reused unchanged - see fast/indy.h.
+// Rare "Indy" engine, GoldenEye 007 variant.
+//
+// AUDIT FINDING (issue #28's "full audit" scope item, partially resolved): the previous version
+// of this table inherited F3DEX2's opcode numbering as an "unaudited baseline." That assumption
+// was wrong. GE's own include/PR/gbi.h guards its opcode numbering behind `#ifdef F3DEX_GBI_2`
+// (our F3DEX2's numbering) with an `#else` branch (our F3DEX/F3D's low+high range numbering) -
+// and F3DEX_GBI_2 is never defined anywhere in goldeneye-pc-port's build, so GE's ACTIVE opcode
+// numbering is the `#else` branch: G_MTX=1, G_MOVEMEM=3, G_VTX=4, G_DL=6, G_TRI1=0xbf, etc. -
+// matching our existing F3DEX_* constants (fast/f3dex.h), not F3DEX2_*. Confirmed opcode-by-
+// opcode against goldeneye-pc-port's port/fast3d/gfx_pc.cpp dispatch switch: every reused
+// handler below (gfx_mtx_handler_f3d, gfx_movemem_handler_f3d, gfx_moveword_handler_f3d,
+// gfx_texture_handler_f3d, gfx_vtx_handler_f3d, gfx_tri1_handler_f3d,
+// gfx_set/clear_geometry_mode_handler_f3d, gfx_othermode_l/h_handler_f3d) is a byte-for-byte
+// match of that port's real argument-decode formulas.
+//
+// G_CULLDL/G_POPMTX are NOT included: perfect_dark's disassembled RSP dispatch table
+// (src/rsp/gsp.s, see indyPdHandlers below) confirms both slots are hard-wired to sp_noop in
+// the shared Indy engine base, and GE's own header (F3DEX_GBI also off) doesn't define distinct
+// opcodes for them either - real display lists never emit them. Still unconfirmed for GE
+// specifically (only cross-checked against PD's labeled disassembly): the full gmain.s/gsp.s
+// audit is open for GE's own low-range custom extensions beyond G_TRI4/G_SETTEX, since GE and
+// PD "independently extended a shared base in a different direction" per issue #28.
+// Note: F3DEX_G_NOOP and INDY_G_SETTEX are both 0xc0 - GE's own header separately names this
+// same universal-noop slot "G_SETTEX" (gsSPUseTexture). One entry, not two: INDY_G_SETTEX below
+// covers it, since it documents the more specific (if never-emitted) meaning; a second literal
+// F3DEX_G_NOOP entry at the same key would just silently overwrite it in the handler array.
 static constexpr UcodeHandler indyGeHandlers = {
-    { F3DEX2_G_NOOP, { "G_NOOP", gfx_noop_handler_f3dex2 } },
-    { F3DEX2_G_SPNOOP, { "G_SPNOOP", gfx_noop_handler_f3dex2 } },
-    { F3DEX2_G_CULLDL, { "G_CULLDL", gfx_cull_dl_handler_f3dex2 } },
-    { F3DEX2_G_MTX, { "G_MTX", gfx_mtx_handler_f3dex2 } },
-    { F3DEX2_G_POPMTX, { "G_POPMTX", gfx_pop_mtx_handler_f3dex2 } },
-    { F3DEX2_G_MOVEMEM, { "G_MOVEMEM", gfx_movemem_handler_f3dex2 } },
-    { F3DEX2_G_MOVEWORD, { "G_MOVEWORD", gfx_moveword_handler_f3dex2 } },
-    { F3DEX2_G_TEXTURE, { "G_TEXTURE", gfx_texture_handler_f3dex2 } },
-    { F3DEX2_G_VTX, { "G_VTX", gfx_vtx_handler_f3dex2 } },
-    { F3DEX2_G_MODIFYVTX, { "G_MODIFYVTX", gfx_modify_vtx_handler_f3dex2 } },
-    { F3DEX2_G_DL, { "G_DL", gfx_dl_handler_common } },
-    { F3DEX2_G_ENDDL, { "G_ENDDL", gfx_end_dl_handler_common } },
-    { F3DEX2_G_GEOMETRYMODE, { "G_GEOMETRYMODE", gfx_geometry_mode_handler_f3dex2 } },
-    { F3DEX2_G_TRI1, { "G_TRI1", gfx_tri1_handler_f3dex2 } },
-    { F3DEX2_G_SETOTHERMODE_L, { "G_SETOTHERMODE_L", gfx_othermode_l_handler_f3dex2 } },
-    { F3DEX2_G_SETOTHERMODE_H, { "G_SETOTHERMODE_H", gfx_othermode_h_handler_f3dex2 } },
+    { F3DEX_G_SPNOOP, { "G_SPNOOP", gfx_noop_handler_f3dex2 } },
+    { F3DEX_G_MTX, { "G_MTX", gfx_mtx_handler_f3d } },
+    { F3DEX_G_MOVEMEM, { "G_MOVEMEM", gfx_movemem_handler_f3d } },
+    { F3DEX_G_VTX, { "G_VTX", gfx_vtx_handler_f3d } },
+    { F3DEX_G_DL, { "G_DL", gfx_dl_handler_common } },
+    { F3DEX_G_ENDDL, { "G_ENDDL", gfx_end_dl_handler_common } },
+    { F3DEX_G_SETGEOMETRYMODE, { "G_SETGEOMETRYMODE", gfx_set_geometry_mode_handler_f3d } },
+    { F3DEX_G_CLEARGEOMETRYMODE, { "G_CLEARGEOMETRYMODE", gfx_clear_geometry_mode_handler_f3d } },
+    { F3DEX_G_TRI1, { "G_TRI1", gfx_tri1_handler_f3d } },
+    { F3DEX_G_SETOTHERMODE_L, { "G_SETOTHERMODE_L", gfx_othermode_l_handler_f3d } },
+    { F3DEX_G_SETOTHERMODE_H, { "G_SETOTHERMODE_H", gfx_othermode_h_handler_f3d } },
+    { F3DEX_G_TEXTURE, { "G_TEXTURE", gfx_texture_handler_f3d } },
+    { F3DEX_G_MOVEWORD, { "G_MOVEWORD", gfx_moveword_handler_f3d } },
     { INDY_G_TRI4, { "G_TRI4", gfx_tri4_handler_indy } },
     { INDY_G_SETTEX, { "G_SETTEX", gfx_settex_handler_indy_ge } },
 };
 
-// Rare "Indy" engine, Perfect Dark variant. Same F3DEX2 baseline and G_TRI4 as
-// ucode_indy_ge, but G_VTX is PD-specific (its own 12-byte Vtx, colour resolved through
-// G_COL's table) and G_COL replaces F3DEX2_G_QUAD at the same opcode slot, since the Indy
-// ucode doesn't expose G_QUAD. PD has no G_SETTEX. See fast/indy.h.
+// Rare "Indy" engine, Perfect Dark variant.
+//
+// Same base-opcode-numbering correction as indyGeHandlers above, but here it's directly and
+// fully confirmed rather than cross-checked by inference: perfect_dark's src/rsp/gsp.s is a
+// symbolically labeled RSP disassembly with an explicit jump table
+// (dma_dispatch_table/imm_dispatch_table) naming every opcode by its real handler, e.g.
+// `/* cmd 04 */ .dh dma_vtx` and `/* cmd b1 */ .dh imm_tri4 // new in PD`, with
+// `imm_popmtx removed in PD` / `imm_culldl removed in PD` comments confirming those two slots
+// are dead. PD's own include/PR/gbi.h #defines match this table exactly (G_MTX=1, G_MOVEMEM=3,
+// G_VTX=4, G_DL=6, G_COL=7 "new in PD", G_TRI4=(G_IMMFIRST-14)=0xb1 "new in PD" replacing the
+// old G_TRI2 slot, G_POPMTX/G_CULLDL literally #defined to 0 as inert placeholders). G_COL
+// replaces F3DEX_G_RESERVED2 (0x07, unused in stock F3DEX) at the same slot. G_VTX is
+// PD-specific (its own 12-byte Vtx, colour resolved through G_COL's table - see
+// gfx_vtx_handler_indy_pd). PD has no G_SETTEX.
 static constexpr UcodeHandler indyPdHandlers = {
-    { F3DEX2_G_NOOP, { "G_NOOP", gfx_noop_handler_f3dex2 } },
-    { F3DEX2_G_SPNOOP, { "G_SPNOOP", gfx_noop_handler_f3dex2 } },
-    { F3DEX2_G_CULLDL, { "G_CULLDL", gfx_cull_dl_handler_f3dex2 } },
-    { F3DEX2_G_MTX, { "G_MTX", gfx_mtx_handler_f3dex2 } },
-    { F3DEX2_G_POPMTX, { "G_POPMTX", gfx_pop_mtx_handler_f3dex2 } },
-    { F3DEX2_G_MOVEMEM, { "G_MOVEMEM", gfx_movemem_handler_f3dex2 } },
-    { F3DEX2_G_MOVEWORD, { "G_MOVEWORD", gfx_moveword_handler_f3dex2 } },
-    { F3DEX2_G_TEXTURE, { "G_TEXTURE", gfx_texture_handler_f3dex2 } },
-    { F3DEX2_G_VTX, { "G_VTX", gfx_vtx_handler_indy_pd } },
-    { F3DEX2_G_MODIFYVTX, { "G_MODIFYVTX", gfx_modify_vtx_handler_f3dex2 } },
-    { F3DEX2_G_DL, { "G_DL", gfx_dl_handler_common } },
-    { F3DEX2_G_ENDDL, { "G_ENDDL", gfx_end_dl_handler_common } },
-    { F3DEX2_G_GEOMETRYMODE, { "G_GEOMETRYMODE", gfx_geometry_mode_handler_f3dex2 } },
-    { F3DEX2_G_TRI1, { "G_TRI1", gfx_tri1_handler_f3dex2 } },
-    { F3DEX2_G_SETOTHERMODE_L, { "G_SETOTHERMODE_L", gfx_othermode_l_handler_f3dex2 } },
-    { F3DEX2_G_SETOTHERMODE_H, { "G_SETOTHERMODE_H", gfx_othermode_h_handler_f3dex2 } },
+    { F3DEX_G_SPNOOP, { "G_SPNOOP", gfx_noop_handler_f3dex2 } },
+    { F3DEX_G_NOOP, { "G_NOOP", gfx_noop_handler_f3dex2 } },
+    { F3DEX_G_MTX, { "G_MTX", gfx_mtx_handler_f3d } },
+    { F3DEX_G_MOVEMEM, { "G_MOVEMEM", gfx_movemem_handler_f3d } },
+    { F3DEX_G_VTX, { "G_VTX", gfx_vtx_handler_indy_pd } },
+    { F3DEX_G_DL, { "G_DL", gfx_dl_handler_common } },
+    { F3DEX_G_ENDDL, { "G_ENDDL", gfx_end_dl_handler_common } },
+    { F3DEX_G_SETGEOMETRYMODE, { "G_SETGEOMETRYMODE", gfx_set_geometry_mode_handler_f3d } },
+    { F3DEX_G_CLEARGEOMETRYMODE, { "G_CLEARGEOMETRYMODE", gfx_clear_geometry_mode_handler_f3d } },
+    { F3DEX_G_TRI1, { "G_TRI1", gfx_tri1_handler_f3d } },
+    { F3DEX_G_SETOTHERMODE_L, { "G_SETOTHERMODE_L", gfx_othermode_l_handler_f3d } },
+    { F3DEX_G_SETOTHERMODE_H, { "G_SETOTHERMODE_H", gfx_othermode_h_handler_f3d } },
+    { F3DEX_G_TEXTURE, { "G_TEXTURE", gfx_texture_handler_f3d } },
+    { F3DEX_G_MOVEWORD, { "G_MOVEWORD", gfx_moveword_handler_f3d } },
     { INDY_G_TRI4, { "G_TRI4", gfx_tri4_handler_indy } },
     { INDY_G_COL, { "G_COL", gfx_col_handler_indy_pd } },
 };
