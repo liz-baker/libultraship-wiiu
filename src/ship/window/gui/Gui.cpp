@@ -137,14 +137,22 @@ void Gui::OnInit(const nlohmann::json& initArgs) {
     }
     mGameOverlay->SetContext(GetContext());
     GetChildren().Add(mGameOverlay);
+    SPDLOG_INFO("Gui::OnInit: GameOverlay::Init");
     mGameOverlay->Init({});
+    SPDLOG_INFO("Gui::OnInit: GameOverlay::Init OK");
 
     mResourceManager->GetResourceLoader()->RegisterResourceFactory(
         std::make_shared<ResourceFactoryBinaryGuiTextureV0>(), RESOURCE_FORMAT_BINARY, "GuiTexture",
         static_cast<uint32_t>(RESOURCE_TYPE_GUI_TEXTURE), 0);
 
+    // Checkpoint pair: see the comment on the GX2 case in
+    // Fast3dGui::ImGuiWMInit()/ImGuiBackendInit() - narrows down which platform/renderer backend
+    // call is the one that doesn't return on Wii U.
+    SPDLOG_INFO("Gui::OnInit: ImGuiWMInit");
     ImGuiWMInit();
+    SPDLOG_INFO("Gui::OnInit: ImGuiWMInit OK, entering ImGuiBackendInit");
     ImGuiBackendInit();
+    SPDLOG_INFO("Gui::OnInit: ImGuiBackendInit OK");
 }
 
 void Gui::ImGuiWMInit() {

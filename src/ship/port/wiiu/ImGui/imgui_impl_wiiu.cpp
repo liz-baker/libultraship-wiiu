@@ -4,6 +4,8 @@
 #include "imgui_impl_wiiu.h"
 #include <stdlib.h> // malloc/free
 
+#include <whb/log.h>
+
 // Software keyboard
 #include <nn/swkbd.h>
 
@@ -36,7 +38,10 @@ bool ImGui_ImplWiiU_Init() {
     io.BackendPlatformName = "imgui_impl_wiiu";
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
 
-    // Initialize and create software keyboard
+    // Initialize and create software keyboard. This whole backend - along with the GX2 renderer
+    // backend right after it - is the first thing to actually run on real Wii U hardware, so this
+    // swkbd bring-up path in particular is unverified there.
+    WHBLogPrint("ImGui_ImplWiiU_Init: allocating swkbd work memory");
     nn::swkbd::CreateArg createArg;
 
     createArg.workMemory = malloc(nn::swkbd::GetWorkMemorySize(0));
@@ -47,10 +52,13 @@ bool ImGui_ImplWiiU_Init() {
         return false;
     }
 
+    WHBLogPrint("ImGui_ImplWiiU_Init: FSAddClient");
     FSAddClient(createArg.fsClient, FS_ERROR_FLAG_NONE);
 
+    WHBLogPrint("ImGui_ImplWiiU_Init: nn::swkbd::Create");
     if (!nn::swkbd::Create(createArg))
         return false;
+    WHBLogPrint("ImGui_ImplWiiU_Init: nn::swkbd::Create OK");
 
     nn::swkbd::AppearArg appearArg;
     bd->CreateArg = createArg;

@@ -21,6 +21,7 @@
 #include <gx2/mem.h>
 #include <gx2r/mem.h>
 
+#include <whb/log.h>
 #include <whb/proc.h>
 #include <proc_ui/procui.h>
 #include <proc_ui/memory.h>
@@ -257,18 +258,26 @@ GfxWindowBackendWiiU::~GfxWindowBackendWiiU() {
 
 void GfxWindowBackendWiiU::Init(const char* gameName, const char* apiName, bool startFullScreen, uint32_t width,
                                 uint32_t height, int32_t posX, int32_t posY) {
+    // Fine-grained checkpoints around every assert()/GX2 call below - none of them print a
+    // diagnostic of their own on failure, and this whole chain (down through Fast3dGui::Init()'s
+    // ImGui/swkbd backend bring-up) is the first thing to exercise it on real hardware, so a
+    // failure here has nothing to point at which call actually aborted.
+    WHBLogPrint("GfxWindowBackendWiiU::Init: WHBProcInit");
     WHBProcInit();
 
     uint32_t mem1_addr, mem1_size;
     OSGetMemBound(OS_MEM1, &mem1_addr, &mem1_size);
+    WHBLogPrintf("GfxWindowBackendWiiU::Init: allocating %u-byte MEM1 storage buffer", mem1_size);
     mem1_storage = memalign(0x40, mem1_size);
     assert(mem1_storage);
 
     ProcUISetMEM1Storage(mem1_storage, mem1_size);
 
+    WHBLogPrint("GfxWindowBackendWiiU::Init: gfx_wiiu_init_mem1");
     bool result = gfx_wiiu_init_mem1();
     assert(result);
 
+    WHBLogPrint("GfxWindowBackendWiiU::Init: allocating command buffer pool");
     command_buffer_pool = memalign(GX2_COMMAND_BUFFER_ALIGNMENT, 0x400000);
     assert(command_buffer_pool);
 
@@ -281,7 +290,9 @@ void GfxWindowBackendWiiU::Init(const char* gameName, const char* apiName, bool 
                                GX2_INIT_ARGV,
                                0,
                                GX2_INIT_END };
+    WHBLogPrint("GfxWindowBackendWiiU::Init: GX2Init");
     GX2Init(initAttribs);
+    WHBLogPrint("GfxWindowBackendWiiU::Init: GX2Init OK");
 
     switch (GX2GetSystemTVScanMode()) {
         case GX2_TV_SCAN_MODE_480I:
@@ -315,8 +326,10 @@ void GfxWindowBackendWiiU::Init(const char* gameName, const char* apiName, bool 
     ProcUIRegisterCallback(PROCUI_CALLBACK_ACQUIRE, gfx_wiiu_proc_callback_acquired, nullptr, 100);
     ProcUIRegisterCallback(PROCUI_CALLBACK_RELEASE, gfx_wiiu_proc_callback_released, nullptr, 100);
 
+    WHBLogPrint("GfxWindowBackendWiiU::Init: acquiring foreground");
     gfx_wiiu_proc_callback_acquired(nullptr);
 
+    WHBLogPrint("GfxWindowBackendWiiU::Init: allocating GX2 context state");
     context_state = (GX2ContextState*)memalign(GX2_CONTEXT_STATE_ALIGNMENT, sizeof(GX2ContextState));
     assert(context_state);
 
@@ -332,7 +345,9 @@ void GfxWindowBackendWiiU::Init(const char* gameName, const char* apiName, bool 
     window_impl.Gx2.Width = WIIU_DEFAULT_FB_WIDTH;
     window_impl.Gx2.Height = WIIU_DEFAULT_FB_HEIGHT;
     if (mFast3dGui) {
+        WHBLogPrint("GfxWindowBackendWiiU::Init: GX2 boot OK, handing off to Fast3dGui::Init");
         mFast3dGui->Init(window_impl);
+        WHBLogPrint("GfxWindowBackendWiiU::Init: Fast3dGui::Init OK");
     }
 }
 

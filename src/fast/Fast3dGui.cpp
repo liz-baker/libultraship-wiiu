@@ -65,7 +65,9 @@ void Fast3dGui::Init(GuiWindowInitData windowImpl) {
     }
     mConsoleVariables = RequireDependency(context->GetChildren().GetFirst<Ship::ConsoleVariable>(), "ConsoleVariable");
     mResourceManager = RequireDependency(context->GetChildren().GetFirst<Ship::ResourceManager>(), "ResourceManager");
+    SPDLOG_INFO("Fast3dGui::Init: dependencies resolved, entering Gui::OnInit");
     Gui::OnInit({});
+    SPDLOG_INFO("Fast3dGui::Init: Gui::OnInit OK");
 }
 
 bool Fast3dGui::SupportsViewports() {
@@ -157,7 +159,12 @@ void Fast3dGui::ImGuiWMInit() {
 #endif
 #ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
+            // Checkpoint: see the comment on the GX2 case in GfxWindowBackendWiiU::Init() -
+            // this is the first thing to exercise the swkbd-backed ImGui platform backend on real
+            // hardware.
+            SPDLOG_INFO("Fast3dGui::ImGuiWMInit: ImGui_ImplWiiU_Init");
             ImGui_ImplWiiU_Init();
+            SPDLOG_INFO("Fast3dGui::ImGuiWMInit: ImGui_ImplWiiU_Init OK");
             break;
 #endif
         default:
@@ -227,7 +234,9 @@ void Fast3dGui::ImGuiBackendInit() {
 #endif
 #ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
+            SPDLOG_INFO("Fast3dGui::ImGuiBackendInit: ImGui_ImplGX2_Init");
             ImGui_ImplGX2_Init();
+            SPDLOG_INFO("Fast3dGui::ImGuiBackendInit: ImGui_ImplGX2_Init OK");
             break;
 #endif
         default:
