@@ -284,9 +284,6 @@ std::shared_ptr<Context> Context::CreateDefaultInstance(const std::string& name,
 std::shared_ptr<Context> Context::CreateInstance(const std::string& name, const std::string& shortName) {
     auto shared = std::make_shared<Context>(name, shortName);
     shared->SetContext(shared);
-    // The root has no OnInit() work of its own, but children (e.g. Gui via RequireDependency())
-    // require it to report IsInitialized() before they will Init().
-    shared->Init();
     return shared;
 }
 
