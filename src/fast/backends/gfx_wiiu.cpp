@@ -4,6 +4,7 @@
 #include <time.h>
 #include <malloc.h>
 #include <cassert>
+#include <exception>
 
 #include <coreinit/time.h>
 #include <coreinit/foreground.h>
@@ -346,7 +347,17 @@ void GfxWindowBackendWiiU::Init(const char* gameName, const char* apiName, bool 
     window_impl.Gx2.Height = WIIU_DEFAULT_FB_HEIGHT;
     if (mFast3dGui) {
         WHBLogPrint("GfxWindowBackendWiiU::Init: GX2 boot OK, handing off to Fast3dGui::Init");
-        mFast3dGui->Init(window_impl);
+        // An exception escaping from here goes uncaught up through Context::CreateInstance() and
+        // std::terminate()s with no output on Wii U, which looks exactly like a hang - surface it.
+        try {
+            mFast3dGui->Init(window_impl);
+        } catch (const std::exception& e) {
+            WHBLogPrintf("GfxWindowBackendWiiU::Init: Fast3dGui::Init threw: %s", e.what());
+            throw;
+        } catch (...) {
+            WHBLogPrint("GfxWindowBackendWiiU::Init: Fast3dGui::Init threw a non-std exception");
+            throw;
+        }
         WHBLogPrint("GfxWindowBackendWiiU::Init: Fast3dGui::Init OK");
     }
 }
