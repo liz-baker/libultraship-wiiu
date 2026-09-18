@@ -3,11 +3,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   build-macos:
+    # Windows/macOS runners are expensive and count heavily against the
+    # Actions minutes quota, so they no longer fire on every push/PR --
+    # trigger manually via workflow_dispatch when a desktop build needs
+    # checking.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-14
     steps:
     - uses: actions/checkout@v4
@@ -35,6 +41,9 @@ jobs:
         path: build-cmake/src/*.a
         if-no-files-found: error
   build-ios:
+    # See build-macos: manual-trigger only to stay within the Actions
+    # minutes quota.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-14
     steps:
     - uses: actions/checkout@v4
@@ -155,6 +164,9 @@ jobs:
         path: build-cmake-android/src/*.a
         if-no-files-found: error
   build-windows-x64:
+    # See build-macos: manual-trigger only to stay within the Actions
+    # minutes quota.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
     - name: Install dependencies
@@ -200,6 +212,9 @@ jobs:
         path: build-cmake-x64/src/**/*.lib
         if-no-files-found: error
   build-windows-arm64:
+    # See build-macos: manual-trigger only to stay within the Actions
+    # minutes quota.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
     steps:
       - name: Install dependencies
