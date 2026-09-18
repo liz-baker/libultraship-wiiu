@@ -58,14 +58,20 @@ Fast3dGui::Fast3dGui(std::vector<std::shared_ptr<Ship::GuiWindow>> guiWindows) :
 
 void Fast3dGui::Init(GuiWindowInitData windowImpl) {
     mImpl = windowImpl;
+    // Checkpoints before the "dependencies resolved" one below: RequireDependency() throws if the
+    // Context isn't Init()'d yet, and nothing else pins down where this prologue stops.
+    SPDLOG_INFO("Fast3dGui::Init: resolving Context");
     auto context = RequireDependency(GetContext(), "Context");
+    SPDLOG_INFO("Fast3dGui::Init: Context OK");
     mWindow = context->GetChildren().GetFirst<Ship::Window>();
     if (mWindow == nullptr) {
         throw std::runtime_error("Component 'Fast3dGui' requires dependency 'Window' to exist before use");
     }
     mConsoleVariables = RequireDependency(context->GetChildren().GetFirst<Ship::ConsoleVariable>(), "ConsoleVariable");
     mResourceManager = RequireDependency(context->GetChildren().GetFirst<Ship::ResourceManager>(), "ResourceManager");
+    SPDLOG_INFO("Fast3dGui::Init: dependencies resolved, entering Gui::OnInit");
     Gui::OnInit({});
+    SPDLOG_INFO("Fast3dGui::Init: Gui::OnInit OK");
 }
 
 bool Fast3dGui::SupportsViewports() {
@@ -157,7 +163,12 @@ void Fast3dGui::ImGuiWMInit() {
 #endif
 #ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
+            // Checkpoint: see the comment on the GX2 case in GfxWindowBackendWiiU::Init() -
+            // this is the first thing to exercise the swkbd-backed ImGui platform backend on real
+            // hardware.
+            SPDLOG_INFO("Fast3dGui::ImGuiWMInit: ImGui_ImplWiiU_Init");
             ImGui_ImplWiiU_Init();
+            SPDLOG_INFO("Fast3dGui::ImGuiWMInit: ImGui_ImplWiiU_Init OK");
             break;
 #endif
         default:
@@ -227,7 +238,9 @@ void Fast3dGui::ImGuiBackendInit() {
 #endif
 #ifdef __WIIU__
         case WindowBackend::FAST3D_GX2:
+            SPDLOG_INFO("Fast3dGui::ImGuiBackendInit: ImGui_ImplGX2_Init");
             ImGui_ImplGX2_Init();
+            SPDLOG_INFO("Fast3dGui::ImGuiBackendInit: ImGui_ImplGX2_Init OK");
             break;
 #endif
         default:
