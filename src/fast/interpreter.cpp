@@ -3759,22 +3759,23 @@ bool gfx_dl_handler_common(F3DGfx** cmd0) {
 
 bool gfx_dl_otr_hash_handler_custom(F3DGfx** cmd0) {
     F3DGfx* cmd = *cmd0;
+    // The hash lives in the word following the command
+    (*cmd0)++;
+
+    uint64_t hash = ((uint64_t)(*cmd0)->words.w0 << 32) + (*cmd0)->words.w1;
+
+    F3DGfx* gfx = (F3DGfx*)sResourceManager->GetResourceRawPointer(hash);
+
     if (C0(16, 1) == 0) {
         // Push return address
-        (*cmd0)++;
-
-        uint64_t hash = ((uint64_t)(*cmd0)->words.w0 << 32) + (*cmd0)->words.w1;
-
-        F3DGfx* gfx = (F3DGfx*)sResourceManager->GetResourceRawPointer(hash);
-
         if (gfx != 0) {
             g_exec_stack.call(cmd, gfx);
         }
-    } else {
-        Interpreter* gfx = mInstance.lock().get();
-        assert(0 && "????");
-        (*cmd0) = (F3DGfx*)gfx->SegAddr((*cmd0)->words.w1);
-        return true;
+    } else if (gfx != 0) {
+        // Branch: continue in the target without pushing a return address
+        (*cmd0) = gfx;
+        g_exec_stack.branch(cmd);
+        return true; // shortcut cmd increment
     }
     return false;
 }
