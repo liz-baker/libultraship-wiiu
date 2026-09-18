@@ -155,11 +155,13 @@ int8_t GetEndOpcodeByUCode(UcodeHandlers ucode) {
         case ucode_f3db:
         case ucode_f3dex:
         case ucode_f3dexb:
+        // Rare's ucodes use F3D-derived numbering; the interpreter's indyGeHandlers/indyPdHandlers end lists on
+        // F3DEX_G_ENDDL (0xB8), not F3DEX2's 0xDF.
+        case ucode_indy_ge:
+        case ucode_indy_pd:
             return F3DEX_G_ENDDL;
         case ucode_f3dex2:
-        case ucode_s2dex:
-        case ucode_indy_ge:
-        case ucode_indy_pd: {
+        case ucode_s2dex: {
             return F3DEX2_G_ENDDL;
         }
         case ucode_max:
