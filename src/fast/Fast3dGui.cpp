@@ -312,8 +312,13 @@ void Fast3dGui::ImGuiWMNewFrame() {
 #ifdef __WIIU__
         case WindowBackend::FAST3D_GX2: {
             // The Wii U platform backend has no dedicated NewFrame; feed ImGui the
-            // frame delta measured by the window backend (microseconds, min 1).
-            ImGui::GetIO().DeltaTime = frametime / 1000000.0f;
+            // frame delta measured by the window backend (microseconds, min 1), and the
+            // framebuffer size the way the SDL3/Win32 backends' NewFrame() do - ImGui's
+            // DisplaySize defaults to (-1, -1), which fails the sanity check in
+            // ImGui::NewFrame() on the very first frame.
+            ImGuiIO& io = ImGui::GetIO();
+            io.DeltaTime = frametime / 1000000.0f;
+            io.DisplaySize = ImVec2(static_cast<float>(mImpl.Gx2.Width), static_cast<float>(mImpl.Gx2.Height));
             break;
         }
 #endif
