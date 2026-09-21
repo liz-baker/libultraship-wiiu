@@ -530,6 +530,13 @@ void GfxRenderingAPIGX2::StartFrame() {
                              GX2_POLYGON_MODE_TRIANGLE, FALSE, FALSE, FALSE);
     }
 
+    // ImGui's pass (see ImGui_ImplGX2_RenderDrawData) leaves its own fetch/vertex/pixel shaders bound
+    // in the context, and the interpreter only calls LoadShader() when the combiner changes, so a
+    // program it still considers current would otherwise draw the next frame with ImGui's shaders.
+    if (mCurrentShaderProgram) {
+        LoadShader(mCurrentShaderProgram);
+    }
+
     mFrameCount++;
 }
 
