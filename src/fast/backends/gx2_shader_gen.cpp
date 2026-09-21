@@ -821,69 +821,66 @@ int gx2GenerateShaderGroup(struct ShaderGroup* group, struct CCFeatures* cc_feat
 
     uint32_t attribOffset = 0;
 
+    // The interpreter packs each vertex tightly (see Interpreter::GfxSpTri1() and the OpenGL
+    // backend's numFloats accounting): position is 4 floats, a texcoord is 2 floats plus one float
+    // per clamp axis in use, fog and grayscale are 4 floats, and every combiner input is RGB (3
+    // floats) or RGBA (4) depending on opt_alpha. Declaring every attribute as 4 floats made the
+    // stride disagree with the vertex data whenever a draw wasn't all-4-wide, so each triangle's
+    // vertices after the first were fetched from the wrong offsets.
+    auto addAttrib = [&](uint32_t location, uint32_t numFloats, uint32_t compSel) {
+        static const GX2AttribFormat formats[] = { GX2_ATTRIB_FORMAT_FLOAT_32, GX2_ATTRIB_FORMAT_FLOAT_32_32,
+                                                   GX2_ATTRIB_FORMAT_FLOAT_32_32_32,
+                                                   GX2_ATTRIB_FORMAT_FLOAT_32_32_32_32 };
+        GX2AttribStream& attrib = group->attributes[group->numAttributes++];
+        attrib.location = location;
+        attrib.buffer = 0;
+        attrib.offset = attribOffset;
+        attrib.format = formats[numFloats - 1];
+        attrib.type = GX2_ATTRIB_INDEX_PER_VERTEX;
+        attrib.aluDivisor = 0;
+        attrib.mask = compSel;
+        attrib.endianSwap = GX2_ENDIAN_SWAP_DEFAULT;
+        attribOffset += numFloats * sizeof(float);
+    };
+
     // aVtxPos
-    group->attributes[group->numAttributes++] = (GX2AttribStream){ 0,
-                                                                   0,
-                                                                   attribOffset,
-                                                                   GX2_ATTRIB_FORMAT_FLOAT_32_32_32_32,
-                                                                   GX2_ATTRIB_INDEX_PER_VERTEX,
-                                                                   0,
-                                                                   GX2_COMP_SEL(_x, _y, _z, _w),
-                                                                   GX2_ENDIAN_SWAP_DEFAULT };
-    attribOffset += 4 * sizeof(float);
+    addAttrib(0, 4, GX2_COMP_SEL(_x, _y, _z, _w));
 
     for (int i = 0; i < 2; i++) {
         if (cc_features->usedTextures[i]) {
-            // aTexCoordX
-            group->attributes[group->numAttributes++] = (GX2AttribStream){ 1 + i,
-                                                                           0,
-                                                                           attribOffset,
-                                                                           GX2_ATTRIB_FORMAT_FLOAT_32_32_32_32,
-                                                                           GX2_ATTRIB_INDEX_PER_VERTEX,
-                                                                           0,
-                                                                           GX2_COMP_SEL(_x, _y, _z, _w),
-                                                                           GX2_ENDIAN_SWAP_DEFAULT };
-            attribOffset += 4 * sizeof(float);
+            // aTexCoordX: u, v, then the S and/or T clamp. The vertex shader reads S clamp from .z
+            // and T clamp from .w, so a T-only clamp (fetched as the third float) is swizzled to .w.
+            const bool clampS = cc_features->clamp[i][0];
+            const bool clampT = cc_features->clamp[i][1];
+            if (clampS && clampT) {
+                addAttrib(1 + i, 4, GX2_COMP_SEL(_x, _y, _z, _w));
+            } else if (clampS) {
+                addAttrib(1 + i, 3, GX2_COMP_SEL(_x, _y, _z, _1));
+            } else if (clampT) {
+                addAttrib(1 + i, 3, GX2_COMP_SEL(_x, _y, _0, _z));
+            } else {
+                addAttrib(1 + i, 2, GX2_COMP_SEL(_x, _y, _0, _1));
+            }
         }
     }
 
     // aFog
     if (cc_features->opt_fog) {
-        group->attributes[group->numAttributes++] = (GX2AttribStream){ 3,
-                                                                       0,
-                                                                       attribOffset,
-                                                                       GX2_ATTRIB_FORMAT_FLOAT_32_32_32_32,
-                                                                       GX2_ATTRIB_INDEX_PER_VERTEX,
-                                                                       0,
-                                                                       GX2_COMP_SEL(_x, _y, _z, _w),
-                                                                       GX2_ENDIAN_SWAP_DEFAULT };
-        attribOffset += 4 * sizeof(float);
+        addAttrib(3, 4, GX2_COMP_SEL(_x, _y, _z, _w));
     }
 
     // aGrayscaleColor
     if (cc_features->opt_grayscale) {
-        group->attributes[group->numAttributes++] = (GX2AttribStream){ 4,
-                                                                       0,
-                                                                       attribOffset,
-                                                                       GX2_ATTRIB_FORMAT_FLOAT_32_32_32_32,
-                                                                       GX2_ATTRIB_INDEX_PER_VERTEX,
-                                                                       0,
-                                                                       GX2_COMP_SEL(_x, _y, _z, _w),
-                                                                       GX2_ENDIAN_SWAP_DEFAULT };
-        attribOffset += 4 * sizeof(float);
+        addAttrib(4, 4, GX2_COMP_SEL(_x, _y, _z, _w));
     }
 
     // aInput
     for (int i = 0; i < cc_features->numInputs; i++) {
-        group->attributes[group->numAttributes++] = (GX2AttribStream){ 5 + i,
-                                                                       0,
-                                                                       attribOffset,
-                                                                       GX2_ATTRIB_FORMAT_FLOAT_32_32_32_32,
-                                                                       GX2_ATTRIB_INDEX_PER_VERTEX,
-                                                                       0,
-                                                                       GX2_COMP_SEL(_x, _y, _z, _w),
-                                                                       GX2_ENDIAN_SWAP_DEFAULT };
-        attribOffset += 4 * sizeof(float);
+        if (cc_features->opt_alpha) {
+            addAttrib(5 + i, 4, GX2_COMP_SEL(_x, _y, _z, _w));
+        } else {
+            addAttrib(5 + i, 3, GX2_COMP_SEL(_x, _y, _z, _1));
+        }
     }
 
     group->stride = attribOffset;

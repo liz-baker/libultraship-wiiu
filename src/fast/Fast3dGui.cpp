@@ -413,7 +413,8 @@ void Fast3dGui::CalculateGameViewport() {
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground;
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |
+                             ImGuiWindowFlags_NoFocusOnAppearing;
 
     ImGui::Begin("Main Game", nullptr, flags);
     ImGui::PopStyleVar(3);
@@ -467,7 +468,8 @@ void Fast3dGui::DrawGame() {
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground;
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |
+                             ImGuiWindowFlags_NoFocusOnAppearing;
 
     ImGui::Begin("Main Game", nullptr, flags);
     ImGui::PopStyleVar(3);
