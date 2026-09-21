@@ -109,8 +109,9 @@ void Gui::OnInit(const nlohmann::json& initArgs) {
     mImGuiIo->Fonts->AddFontFromMemoryCompressedBase85TTF(fontawesome_compressed_data_base85, iconFontSize,
                                                           &iconsConfig, sIconsRanges);
 
-#if defined(__ANDROID__)
-    // Scale everything by 2 for Android
+#if defined(__ANDROID__) || defined(__WIIU__)
+    // Scale everything by 2 for Android. On Wii U the GamePad mirrors the 1920x1080 image at 854x480,
+    // which shrinks 13px text to ~6px and makes the UI unreadable there without this.
     ImGui::GetStyle().ScaleAllSizes(2.0f);
     mImGuiIo->FontGlobalScale = 2.0f;
 #endif
