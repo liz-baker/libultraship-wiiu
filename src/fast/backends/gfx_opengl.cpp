@@ -74,13 +74,19 @@ void GfxRenderingAPIOGL::SetPerDrawUniforms() {
     glUniform1f(mCurrentShaderProgram->prim_depth_location, mCurrentPrimDepth);
 
     if (mCurrentShaderProgram->usedTextures[0] || mCurrentShaderProgram->usedTextures[1]) {
-        GLint filtering[2] = { textures[mCurrentTextureIds[0]].filtering, textures[mCurrentTextureIds[1]].filtering };
+        // A slot can be unset (no texture imported yet), and textures is empty until NewTexture() runs.
+        GLint filtering[2] = { FILTER_NONE, FILTER_NONE };
+        GLint width[2] = { 1, 1 };
+        GLint height[2] = { 1, 1 };
+        for (int i = 0; i < SHADER_MAX_TEXTURES; i++) {
+            if (mCurrentTextureIds[i] < textures.size()) {
+                filtering[i] = textures[mCurrentTextureIds[i]].filtering;
+                width[i] = textures[mCurrentTextureIds[i]].width;
+                height[i] = textures[mCurrentTextureIds[i]].height;
+            }
+        }
         glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
-
-        GLint width[2] = { textures[mCurrentTextureIds[0]].width, textures[mCurrentTextureIds[1]].width };
         glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
-
-        GLint height[2] = { textures[mCurrentTextureIds[0]].height, textures[mCurrentTextureIds[1]].height };
         glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
     }
 }

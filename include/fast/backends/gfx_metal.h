@@ -265,7 +265,7 @@ class GfxRenderingAPIMetal final : public GfxRenderingAPI {
     NS::AutoreleasePool* mFrameAutoreleasePool;
 
     int mCurrentTile;
-    uint32_t mCurrentTextureIds[SHADER_MAX_TEXTURES];
+    uint32_t mCurrentTextureIds[SHADER_MAX_TEXTURES] = {};
 
     int32_t mRenderTargetHeight;
     int mCurrentFramebuffer;

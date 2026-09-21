@@ -517,6 +517,11 @@ void GfxRenderingAPIMetal::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, si
     }
 
     for (int i = 0; i < SHADER_MAX_TEXTURES; i++) {
+        // A used slot can be unset (no texture imported yet), and mTextures is empty until NewTexture() runs.
+        if (mCurrentTextureIds[i] >= mTextures.size()) {
+            continue;
+        }
+
         if (mShaderProgram->usedTextures[i]) {
             if (current_framebuffer.mLastBoundTextures[i] != mTextures[mCurrentTextureIds[i]].texture) {
                 current_framebuffer.mLastBoundTextures[i] = mTextures[mCurrentTextureIds[i]].texture;
