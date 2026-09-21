@@ -771,6 +771,13 @@ void Interpreter::ImportTextureIA4(int tile, bool importReplacement) {
     uint32_t width = widthBytes * 2;
     uint32_t height = widthBytes > 0 ? sizeBytes / widthBytes : 0;
 
+    // A 4-bit row is padded to a whole byte, so an odd-width image imports one texel too wide; the
+    // sampling scale is derived from the clamped tile width, so trim to it like the other importers.
+    uint32_t tileW = GetTileSizeFromCoordinates(mRdp->texture_tile[tile].uls, mRdp->texture_tile[tile].lrs);
+    if ((mRdp->texture_tile[tile].cms & G_TX_CLAMP) && tileW > 0 && tileW < width) {
+        width = tileW;
+    }
+
     if (fullImageLineSizeBytes == sizeBytes) {
         fullImageLineSizeBytes = widthBytes;
     }
@@ -910,6 +917,13 @@ void Interpreter::ImportTextureI4(int tile, bool importReplacement) {
                                                mRdp->texture_tile[tile].line_size_bytes);
     uint32_t width = widthBytes * 2;
     uint32_t height = widthBytes > 0 ? sizeBytes / widthBytes : 0;
+
+    // A 4-bit row is padded to a whole byte, so an odd-width image imports one texel too wide; the
+    // sampling scale is derived from the clamped tile width, so trim to it like the other importers.
+    uint32_t tileW = GetTileSizeFromCoordinates(mRdp->texture_tile[tile].uls, mRdp->texture_tile[tile].lrs);
+    if ((mRdp->texture_tile[tile].cms & G_TX_CLAMP) && tileW > 0 && tileW < width) {
+        width = tileW;
+    }
 
     // A single line of pixels should not equal the entire image (height == 1 non-withstanding)
     if (fullImageLineSizeBytes == sizeBytes) {
