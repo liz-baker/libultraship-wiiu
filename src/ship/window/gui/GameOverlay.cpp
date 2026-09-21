@@ -200,7 +200,7 @@ void GameOverlay::Draw() {
     ImGui::Begin("GameOverlay", nullptr,
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
-                     ImGuiWindowFlags_NoInputs);
+                     ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoInputs);
 
     CleanupNotifications();
 
