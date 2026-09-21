@@ -821,7 +821,7 @@ int gx2GenerateShaderGroup(struct ShaderGroup* group, struct CCFeatures* cc_feat
 
     uint32_t attribOffset = 0;
 
-    // The interpreter packs each vertex tightly (see Interpreter::BufferTriangles / the OpenGL
+    // The interpreter packs each vertex tightly (see Interpreter::GfxSpTri1() and the OpenGL
     // backend's numFloats accounting): position is 4 floats, a texcoord is 2 floats plus one float
     // per clamp axis in use, fog and grayscale are 4 floats, and every combiner input is RGB (3
     // floats) or RGBA (4) depending on opt_alpha. Declaring every attribute as 4 floats made the
@@ -831,10 +831,15 @@ int gx2GenerateShaderGroup(struct ShaderGroup* group, struct CCFeatures* cc_feat
         static const GX2AttribFormat formats[] = { GX2_ATTRIB_FORMAT_FLOAT_32, GX2_ATTRIB_FORMAT_FLOAT_32_32,
                                                    GX2_ATTRIB_FORMAT_FLOAT_32_32_32,
                                                    GX2_ATTRIB_FORMAT_FLOAT_32_32_32_32 };
-        group->attributes[group->numAttributes++] = (GX2AttribStream){
-            location, 0, attribOffset, formats[numFloats - 1], GX2_ATTRIB_INDEX_PER_VERTEX, 0, compSel,
-            GX2_ENDIAN_SWAP_DEFAULT
-        };
+        GX2AttribStream& attrib = group->attributes[group->numAttributes++];
+        attrib.location = location;
+        attrib.buffer = 0;
+        attrib.offset = attribOffset;
+        attrib.format = formats[numFloats - 1];
+        attrib.type = GX2_ATTRIB_INDEX_PER_VERTEX;
+        attrib.aluDivisor = 0;
+        attrib.mask = compSel;
+        attrib.endianSwap = GX2_ENDIAN_SWAP_DEFAULT;
         attribOffset += numFloats * sizeof(float);
     };
 
