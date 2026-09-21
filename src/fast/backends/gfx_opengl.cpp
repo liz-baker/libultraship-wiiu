@@ -78,7 +78,8 @@ void GfxRenderingAPIOGL::SetPerDrawUniforms() {
         GLint filtering[2] = { FILTER_NONE, FILTER_NONE };
         GLint width[2] = { 1, 1 };
         GLint height[2] = { 1, 1 };
-        for (int i = 0; i < SHADER_MAX_TEXTURES; i++) {
+        // The shader's per-draw uniforms only cover the first two texture slots.
+        for (int i = 0; i < 2; i++) {
             if (mCurrentTextureIds[i] < textures.size()) {
                 filtering[i] = textures[mCurrentTextureIds[i]].filtering;
                 width[i] = textures[mCurrentTextureIds[i]].width;
