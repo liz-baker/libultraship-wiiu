@@ -6,6 +6,10 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#ifdef __WIIU__
+#include <spdlog/sinks/udp_sink.h>
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #include <libloaderapi.h>
@@ -71,6 +75,16 @@ void Logger::OnInit(const nlohmann::json& /*initArgs*/) {
 
         auto fileSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(mLogFilePath, 1024 * 1024 * 10, 10);
         sinks.push_back(fileSink);
+
+#ifdef __WIIU__
+        // Broadcast logs over UDP so they show up in a UDP log listener on the LAN. There's no
+        // useful stdout on console, and this is the only sink most Wii U debugging setups have.
+        // Host/port are fixed (not user-configurable) and match the SERVER_PORT/INADDR_BROADCAST
+        // convention devkitPro's WHBLogUdpInit() already uses elsewhere in this codebase
+        // (see Ship::WiiU::Init(), WiiUImpl.cpp), so existing Wii U UDP log tools pick it up.
+        spdlog::sinks::udp_sink_config udpConfig("255.255.255.255", 4405);
+        sinks.push_back(std::make_shared<spdlog::sinks::udp_sink_mt>(udpConfig));
+#endif
 
 #ifdef _DEBUG
         mLogger = std::make_shared<spdlog::logger>(mAppName, sinks.begin(), sinks.end());
