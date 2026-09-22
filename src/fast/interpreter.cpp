@@ -583,6 +583,11 @@ static uint32_t GetEffectiveLineSize(uint32_t lineSizeBytes, uint32_t fullImageL
     if ((lineSizeBytes != sizeBytes || fullImageLineSizeBytes != sizeBytes) && lineSizeBytes > 0) {
         return lineSizeBytes;
     }
+    // A tile stride wider than the whole image (8-byte hardware minimum
+    // overshooting a sub-8-byte row) can't be a real width; use the size.
+    if (tileLineSizeBytes > sizeBytes && sizeBytes > 0) {
+        return sizeBytes;
+    }
     return tileLineSizeBytes;
 }
 
