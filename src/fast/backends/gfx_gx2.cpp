@@ -192,6 +192,16 @@ uint32_t GfxRenderingAPIGX2::NewTexture() {
 void GfxRenderingAPIGX2::DeleteTexture(uint32_t texture_id) {
     Texture* tex = (Texture*)texture_id;
 
+    // Don't leave a dangling pointer behind for StartFrame() to rebind next frame.
+    for (auto& bound : mBoundTextures) {
+        if (bound == tex) {
+            bound = nullptr;
+        }
+    }
+    if (mCurrentTexture == tex) {
+        mCurrentTexture = nullptr;
+    }
+
     if (tex->texture.surface.image) {
         free(tex->texture.surface.image);
     }
@@ -199,11 +209,7 @@ void GfxRenderingAPIGX2::DeleteTexture(uint32_t texture_id) {
     free((void*)tex);
 }
 
-void GfxRenderingAPIGX2::SelectTexture(int tile, uint32_t texture_id) {
-    Texture* tex = (Texture*)texture_id;
-    mCurrentTexture = tex;
-    mCurrentTile = tile;
-
+void GfxRenderingAPIGX2::BindTextureSlot(int tile, Texture* tex) {
     if (mCurrentShaderProgram) {
         int32_t sampler_location = mCurrentShaderProgram->samplers_location[tile];
         if (sampler_location != -1) {
@@ -216,6 +222,15 @@ void GfxRenderingAPIGX2::SelectTexture(int tile, uint32_t texture_id) {
             }
         }
     }
+}
+
+void GfxRenderingAPIGX2::SelectTexture(int tile, uint32_t texture_id) {
+    Texture* tex = (Texture*)texture_id;
+    mCurrentTexture = tex;
+    mCurrentTile = tile;
+    mBoundTextures[tile] = tex;
+
+    BindTextureSlot(tile, tex);
 }
 
 void GfxRenderingAPIGX2::UploadTexture(const uint8_t* rgba32_buf, uint32_t width, uint32_t height) {
@@ -535,6 +550,17 @@ void GfxRenderingAPIGX2::StartFrame() {
     // program it still considers current would otherwise draw the next frame with ImGui's shaders.
     if (mCurrentShaderProgram) {
         LoadShader(mCurrentShaderProgram);
+    }
+
+    // ImGui's pass also leaves its own texture/sampler bound at slot 0 (see ImGui_ImplGX2_RenderDrawData),
+    // and the interpreter only calls SelectTexture()/SetSamplerParameters() again when a tile's texture or
+    // sampler params change, so a slot the interpreter still considers current would otherwise draw with
+    // ImGui's texture/sampler until something happens to change it.
+    for (int tile = 0; tile < SHADER_MAX_TEXTURES; tile++) {
+        Texture* tex = mBoundTextures[tile];
+        if (tex) {
+            BindTextureSlot(tile, tex);
+        }
     }
 
     mFrameCount++;
