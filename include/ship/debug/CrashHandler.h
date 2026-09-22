@@ -20,6 +20,10 @@
 #include <windows.h>
 #endif
 
+#ifdef __WIIU__
+#include <coreinit/context.h>
+#endif
+
 namespace Ship {
 
 /**
@@ -34,10 +38,13 @@ typedef void (*CrashHandlerCallback)(char*, size_t*);
 /**
  * @brief Installs platform-specific signal / exception handlers to capture crash information.
  *
- * CrashHandler sets up OS-level handlers (POSIX signals on Linux, SEH on Windows)
- * that fill a fixed-size text buffer with a human-readable crash report, then invoke
- * any registered CrashHandlerCallback so the application can append game-specific
- * state before the process exits.
+ * CrashHandler sets up OS-level handlers (POSIX signals on Linux, SEH on Windows,
+ * OSSetExceptionCallbackEx on Wii U) that fill a fixed-size text buffer with a
+ * human-readable crash report, then invoke any registered CrashHandlerCallback
+ * so the application can append game-specific state before the process exits.
+ * On Wii U there is no attached-debugger or exit() story, so the handler ends
+ * by flushing the report through the logger (visible over the UDP log sink)
+ * and halting on an OSFatal screen so testers at least know it crashed.
  *
  * **Required Context children (looked up at crash time):**
  * - **Logger** — if present, its underlying spdlog logger is flushed after
@@ -95,6 +102,12 @@ class CrashHandler : public Component {
      * @param ctx Windows CONTEXT structure used as the starting frame for stack unwinding.
      */
     void PrintStack(CONTEXT* ctx);
+#elif defined(__WIIU__)
+    /**
+     * @brief Appends the values of the CPU registers from @p ctx to the crash report.
+     * @param ctx Exception context containing the register state.
+     */
+    void PrintRegisters(OSContext* ctx);
 #endif
 
   private:

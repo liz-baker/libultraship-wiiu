@@ -12,6 +12,9 @@
 #include <excpt.h>
 
 #pragma comment(lib, "Dbghelp.lib")
+#elif defined(__WIIU__)
+#include <coreinit/debug.h>
+#include <coreinit/exception.h>
 #endif
 
 namespace Ship {
@@ -433,6 +436,149 @@ extern "C" LONG WINAPI seh_filter(PEXCEPTION_POINTERS ex) {
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
+#elif defined(__WIIU__)
+
+void CrashHandler::PrintRegisters(OSContext* ctx) {
+    char regBuffer[32];
+    AppendLine("Registers:");
+    snprintf(regBuffer, std::size(regBuffer), "SRR0 (PC):  0x%08X", (unsigned int)ctx->srr0);
+    AppendLine(regBuffer);
+    snprintf(regBuffer, std::size(regBuffer), "SRR1 (MSR): 0x%08X", (unsigned int)ctx->srr1);
+    AppendLine(regBuffer);
+    snprintf(regBuffer, std::size(regBuffer), "LR:         0x%08X", (unsigned int)ctx->lr);
+    AppendLine(regBuffer);
+    snprintf(regBuffer, std::size(regBuffer), "CTR:        0x%08X", (unsigned int)ctx->ctr);
+    AppendLine(regBuffer);
+    snprintf(regBuffer, std::size(regBuffer), "CR:         0x%08X", (unsigned int)ctx->cr);
+    AppendLine(regBuffer);
+    snprintf(regBuffer, std::size(regBuffer), "XER:        0x%08X", (unsigned int)ctx->xer);
+    AppendLine(regBuffer);
+    snprintf(regBuffer, std::size(regBuffer), "DSISR:      0x%08X", (unsigned int)ctx->dsisr);
+    AppendLine(regBuffer);
+    snprintf(regBuffer, std::size(regBuffer), "DAR:        0x%08X", (unsigned int)ctx->dar);
+    AppendLine(regBuffer);
+    for (int i = 0; i < 32; i++) {
+        snprintf(regBuffer, std::size(regBuffer), "r%-2d:        0x%08X", i, (unsigned int)ctx->gpr[i]);
+        AppendLine(regBuffer);
+    }
+}
+
+static const char* WiiUExceptionTypeName(OSExceptionType type) {
+    switch (type) {
+        case OS_EXCEPTION_TYPE_DSI:
+            return "DSI (invalid data access)";
+        case OS_EXCEPTION_TYPE_ISI:
+            return "ISI (invalid instruction fetch)";
+        case OS_EXCEPTION_TYPE_PROGRAM:
+            return "PROGRAM (illegal instruction / trap)";
+        case OS_EXCEPTION_TYPE_ALIGNMENT:
+            return "ALIGNMENT (misaligned access)";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+// devkitPPC/EABI stack frames start with a back-chain word pointing at the
+// caller's frame, and each frame's saved LR lives 4 bytes into *that* caller
+// frame (verified against -O0 codegen: `stwu r1,-N(r1)` stores the old r1 as
+// the back chain, then `stw r0,N+4(r1)` writes LR to old_r1+4). There is no
+// execinfo.h/dladdr equivalent on this target, so this walks the chain by
+// hand and resolves what it can via OSGetSymbolName (which only knows about
+// exported RPL/RPX symbols - most application code will just show as a raw
+// address, still enough to pair with addr2line against the .elf).
+static constexpr size_t kMaxBacktraceFrames = 32;
+
+// Guards against a fault happening again while we're already producing a
+// report (e.g. a bad backtrace read) sending us into unbounded recursion.
+static bool sHandlingWiiUException = false;
+
+static BOOL HandleWiiUException(OSExceptionType type, OSContext* context) {
+    if (sHandlingWiiUException) {
+        OSFatal("A second exception occurred while handling the first one.");
+        for (;;) {}
+    }
+    sHandlingWiiUException = true;
+
+    std::shared_ptr<CrashHandler> crashHandler = sCrashHandler.lock();
+    if (!crashHandler) {
+        OSFatal("Unhandled exception (no CrashHandler installed).");
+        for (;;) {}
+    }
+
+    char lineBuffer[96];
+
+    WRITE_VAR_LINE(crashHandler, "Exception: ", WiiUExceptionTypeName(type));
+
+    crashHandler->PrintRegisters(context);
+
+    if (type == OS_EXCEPTION_TYPE_DSI) {
+        snprintf(lineBuffer, sizeof(lineBuffer), "Fault address (DAR): 0x%08lX", (unsigned long)context->dar);
+        crashHandler->AppendLine(lineBuffer);
+    }
+
+    crashHandler->AppendLine("Traceback:");
+    uint32_t sp = context->gpr[1];
+    uint32_t returnAddr = context->lr;
+    char intToCharBuffer[16];
+    for (size_t i = 0; i < kMaxBacktraceFrames; i++) {
+        char symbolName[96];
+        char frameLine[144];
+        if (OSGetSymbolName(returnAddr, symbolName, sizeof(symbolName)) != 0) {
+            snprintf(frameLine, sizeof(frameLine), "0x%08lX (%s)", (unsigned long)returnAddr, symbolName);
+        } else {
+            snprintf(frameLine, sizeof(frameLine), "0x%08lX", (unsigned long)returnAddr);
+        }
+        snprintf(intToCharBuffer, sizeof(intToCharBuffer), "%zu ", i);
+        WRITE_VAR_LINE(crashHandler, intToCharBuffer, frameLine);
+
+        // Frame pointers must be word-aligned and the chain must move
+        // strictly upward, or we bail rather than risk an infinite loop /
+        // wild read on a corrupted stack.
+        if (sp == 0 || (sp & 0x3) != 0) {
+            break;
+        }
+        uint32_t nextSp = *reinterpret_cast<uint32_t*>(sp);
+        if (nextSp == 0 || nextSp <= sp || (nextSp & 0x3) != 0) {
+            break;
+        }
+        returnAddr = *reinterpret_cast<uint32_t*>(nextSp + 4);
+        sp = nextSp;
+    }
+
+    crashHandler->PrintCommon();
+
+    if (auto logger = spdlog::default_logger()) {
+        logger->flush();
+    }
+
+    char fatalMessage[256];
+    snprintf(fatalMessage, sizeof(fatalMessage),
+             "%s has crashed.\n%s\nPC: 0x%08lX  LR: 0x%08lX\nSee the UDP log for full details.",
+             GetCrashAppName().c_str(), WiiUExceptionTypeName(type), (unsigned long)context->srr0,
+             (unsigned long)context->lr);
+    OSFatal(fatalMessage);
+
+    // OSFatal halts and does not return; loop defensively in case it ever does.
+    for (;;) {}
+    return TRUE;
+}
+
+static BOOL DsiExceptionHandler(OSContext* context) {
+    return HandleWiiUException(OS_EXCEPTION_TYPE_DSI, context);
+}
+
+static BOOL IsiExceptionHandler(OSContext* context) {
+    return HandleWiiUException(OS_EXCEPTION_TYPE_ISI, context);
+}
+
+static BOOL ProgramExceptionHandler(OSContext* context) {
+    return HandleWiiUException(OS_EXCEPTION_TYPE_PROGRAM, context);
+}
+
+static BOOL AlignmentExceptionHandler(OSContext* context) {
+    return HandleWiiUException(OS_EXCEPTION_TYPE_ALIGNMENT, context);
+}
+
 #endif
 
 CrashHandler::CrashHandler() : Component("CrashHandler"), mOutBuffer(std::make_unique<char[]>(gMaxBufferSize)) {
@@ -456,6 +602,12 @@ CrashHandler::CrashHandler() : Component("CrashHandler"), mOutBuffer(std::make_u
     sigaction(SIGKILL, &shutdownAction, nullptr);
 #elif defined(_WIN32)
     SetUnhandledExceptionFilter(seh_filter);
+#elif defined(__WIIU__)
+    OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_DSI, DsiExceptionHandler);
+    OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_ISI, IsiExceptionHandler);
+    OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_PROGRAM, ProgramExceptionHandler);
+    OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_ALIGNMENT,
+                             AlignmentExceptionHandler);
 #endif
     MarkInitialized();
 }
