@@ -113,7 +113,7 @@ Context::~Context() {
         SPDLOG_TRACE("destruct context");
     }
     auto window = GetChildren().GetFirst<Window>();
-    if (window) {
+    if (window && window->IsInitialized()) {
         window->SaveWindowToConfig();
     }
 
