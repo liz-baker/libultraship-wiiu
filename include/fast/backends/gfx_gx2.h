@@ -117,6 +117,7 @@ class GfxRenderingAPIGX2 final : public GfxRenderingAPI {
 
     void InitFramebuffer(Framebuffer* buffer, uint32_t width, uint32_t height);
     void SetUniforms(ShaderProgram* prg);
+    void BindTextureSlot(int tile, Texture* tex);
 
     std::array<Framebuffer, 100> mFramebuffers{};
     std::size_t mUsedFramebuffers = 0;
@@ -128,6 +129,10 @@ class GfxRenderingAPIGX2 final : public GfxRenderingAPI {
 
     Texture* mCurrentTexture = nullptr;
     int mCurrentTile = 0;
+
+    // Texture/sampler last bound per shader sampler slot, so StartFrame() can rebind them after
+    // ImGui's GX2 pass clobbers the same hardware slots (see BindTextureSlot()).
+    std::array<Texture*, SHADER_MAX_TEXTURES> mBoundTextures{};
 
     uint8_t* mDrawBuffer = nullptr;
     uint8_t* mDrawPtr = nullptr;
