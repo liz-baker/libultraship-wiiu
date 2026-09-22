@@ -367,10 +367,12 @@ void GfxRenderingAPIGX2::SetScissor(int x, int y, int width, int height) {
     uint32_t buffer_height = buffer.color_buffer.surface.height;
     uint32_t buffer_width = buffer.color_buffer.surface.width;
 
-    mScissorX = std::min((uint32_t)width, (uint32_t)x);
-    mScissorY = std::min((uint32_t)height, buffer_height - y - height);
-    mScissorWidth = std::min((uint32_t)width, buffer_width);
-    mScissorHeight = std::min((uint32_t)height, buffer_height);
+    uint32_t flipped_y = buffer_height - y - height;
+
+    mScissorX = std::min((uint32_t)x, buffer_width);
+    mScissorY = std::min(flipped_y, buffer_height);
+    mScissorWidth = std::min((uint32_t)width, buffer_width - mScissorX);
+    mScissorHeight = std::min((uint32_t)height, buffer_height - mScissorY);
 
     GX2SetScissor(mScissorX, mScissorY, mScissorWidth, mScissorHeight);
 }
@@ -440,7 +442,7 @@ void GfxRenderingAPIGX2::Init() {
     GX2CalcSurfaceSizeAndAlignment(&mDepthReadBuffer.surface);
 
     mDepthReadBuffer.surface.image =
-        gfx_wiiu_alloc_mem1(mDepthReadBuffer.surface.alignment, mDepthReadBuffer.surface.imageSize);
+        gfx_wiiu_alloc_mem1(mDepthReadBuffer.surface.imageSize, mDepthReadBuffer.surface.alignment);
     assert(mDepthReadBuffer.surface.image);
     GX2Invalidate(GX2_INVALIDATE_MODE_CPU | GX2_INVALIDATE_MODE_DEPTH_BUFFER, mDepthReadBuffer.surface.image,
                   mDepthReadBuffer.surface.imageSize);
