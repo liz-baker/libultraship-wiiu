@@ -617,12 +617,22 @@ static const uint8_t* TileTextureAddr(const RDP* rdp, uint8_t tile) {
 }
 
 static uint32_t GetTileSizeFromCoordinates(float low, float high) {
-    // An unset tile (high <= low) defines no region; return 0 so callers skip the tile-region clamp
-    // instead of collapsing the texture to the phantom 1-texel size the +4 formula would yield.
-    if (high <= low) {
+    // high < low is unset; return 0 so callers skip the tile-region clamp. high == low == 0 is the
+    // common "tile never explicitly sized" default, treated the same way (most games rely on it
+    // meaning "use the whole loaded image", not a literal 1-texel tile) - this exact pair is what
+    // the old "phantom 1-texel" comment here was guarding against.
+    //
+    // Any other high == low (e.g. uls == lrs != 0) is a real hardware degenerate 1-texel tile, not
+    // unset: it's what a half-texel sample-offset bias produces for a genuinely 1-texel image (see
+    // #61 - a GoldenEye texture uses exactly this). Hardware's own tile span is
+    // (high>>2) - (low>>2) + 1 texels (10.2 fixed-point, integer part only); use that instead of
+    // the old "+4, then round" approximation, which this degenerate case defeats.
+    if (high < low || (high == low && high == 0.0f)) {
         return 0;
     }
-    return static_cast<uint32_t>(lroundf((high - low + 4.0f) / 4.0f));
+    uint32_t lowWhole = static_cast<uint32_t>(low) / 4u;
+    uint32_t highWhole = static_cast<uint32_t>(high) / 4u;
+    return highWhole - lowWhole + 1u;
 }
 
 void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
@@ -2140,6 +2150,15 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         }
     }
 
+    // Some display lists set tile1 == tile0 (same tmem source, same G_SETTILESIZE) to get a
+    // TRILERP combiner without a real mip pyramid. There is no second mip level to blend from
+    // there, so force LOD_FRACTION to 0 (pure texel0) instead of running the vertex-w-distance
+    // hack below, which would otherwise blend in texel1's (different, unrelated) texels.
+    bool same_size_fake_mip =
+        comb->usedTextures[0] && comb->usedTextures[1] && effective_tile[0] != effective_tile[1] &&
+        mRdp->texture_tile[effective_tile[0]].tmem_index == mRdp->texture_tile[effective_tile[1]].tmem_index &&
+        tex_width2[0] > 0 && tex_width2[0] == tex_width2[1] && tex_height2[0] > 0 && tex_height2[0] == tex_height2[1];
+
     struct ShaderProgram* prg = comb->prg[tm];
     if (prg == NULL) {
         comb->prg[tm] = prg =
@@ -2286,19 +2305,21 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                         break;
                     }
                     case G_CCMUX_LOD_FRACTION: {
-                        if (mRdp->other_mode_l & G_TL_LOD) {
+                        float distance_frac = 255.0f;
+                        if ((mRdp->other_mode_l & G_TL_LOD) && !same_size_fake_mip) {
                             // "Hack" that works for Bowser - Peach painting
-                            float distance_frac = (v1->w - 3000.0f) / 3000.0f;
+                            distance_frac = (v1->w - 3000.0f) / 3000.0f;
                             if (distance_frac < 0.0f) {
                                 distance_frac = 0.0f;
                             }
                             if (distance_frac > 1.0f) {
                                 distance_frac = 1.0f;
                             }
-                            tmp.r = tmp.g = tmp.b = tmp.a = distance_frac * 255.0f;
-                        } else {
-                            tmp.r = tmp.g = tmp.b = tmp.a = 255.0f;
+                            distance_frac *= 255.0f;
+                        } else if (mRdp->other_mode_l & G_TL_LOD) {
+                            distance_frac = 0.0f;
                         }
+                        tmp.r = tmp.g = tmp.b = tmp.a = distance_frac;
                         color = &tmp;
                         break;
                     }
@@ -2593,13 +2614,22 @@ void Interpreter::GfxDpSetTile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_
     // Fall back to the old two-bucket heuristic ("assume one texture at tmem 0, another at any
     // nonzero tmem") when no loaded block covers this tmem yet, e.g. SETTILE ran before the
     // matching LOADBLOCK/LOADTILE.
+    // Real TMEM is one physical bank; both loaded_texture[] entries can legitimately claim to
+    // cover the same address if a slot's old load was never invalidated even though physical
+    // TMEM has since been overwritten there by a load into the *other* slot. When both match,
+    // prefer the one with the higher load_seq (the one actually loaded most recently) - see #61.
     uint8_t resolvedIndex = tmem != 0;
+    uint32_t resolvedSeq = 0;
+    bool resolved = false;
     for (uint8_t slot = 0; slot < 2; slot++) {
         const auto& loaded = mRdp->loaded_texture[slot];
         uint32_t sizeWords = (loaded.size_bytes + 7) / 8;
         if (sizeWords > 0 && tmem >= loaded.tmem_base && tmem < loaded.tmem_base + sizeWords) {
-            resolvedIndex = slot;
-            break;
+            if (!resolved || loaded.load_seq > resolvedSeq) {
+                resolvedIndex = slot;
+                resolvedSeq = loaded.load_seq;
+                resolved = true;
+            }
         }
     }
     mRdp->texture_tile[tile].tmem_index = resolvedIndex;
@@ -2728,6 +2758,7 @@ void Interpreter::GfxDpLoadBlock(uint8_t tile, uint32_t uls, uint32_t ult, uint3
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr = mRdp->texture_to_load.addr;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tmem_base = mRdp->texture_tile[tile].tmem;
+    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].load_seq = ++mRdp->next_load_seq;
     // fprintf(stderr, "GfxDpLoadBlock: line_size = 0x%x; orig = 0x%x; bpp=%d; lrs=%d\n", size_bytes,
     // orig_size_bytes,
     //         mRdp->texture_to_load.siz, lrs);
@@ -2802,6 +2833,7 @@ void Interpreter::GfxDpLoadTile(uint8_t tile, uint32_t uls, uint32_t ult, uint32
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr = mRdp->texture_to_load.addr + start_offset_bytes;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tmem_base = mRdp->texture_tile[tile].tmem;
+    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].load_seq = ++mRdp->next_load_seq;
 
     const std::string_view texPath =
         mRdp->texture_to_load.raw_tex_metadata.resource != nullptr

@@ -301,6 +301,12 @@ struct RDP {
         // block but starts partway into it (e.g. one mip level of a chain loaded by a
         // single G_LOADBLOCK) find its own byte offset via TileTmemByteOffset(). See #59.
         uint16_t tmem_base;
+        // Monotonic counter, stamped by GfxDpLoadBlock/GfxDpLoadTile. Real TMEM is one
+        // physical bank; our two loaded_texture[] entries are only a heuristic model of
+        // it, so when both entries' tmem_base happen to cover the same address (one is
+        // stale, left over from an earlier load that physical TMEM has since overwritten),
+        // this breaks the tie toward whichever one was actually loaded most recently. See #61.
+        uint32_t load_seq;
     } loaded_texture[2];
     struct {
         uint8_t fmt;
@@ -315,6 +321,9 @@ struct RDP {
         uint8_t tmem_index; // 0 or 1 for offset 0 kB or offset 2 kB, respectively
     } texture_tile[8];
     bool textures_changed[2];
+
+    // Stamped into loaded_texture[].load_seq by each G_LOADBLOCK/G_LOADTILE; see its comment.
+    uint32_t next_load_seq;
 
     uint8_t first_tile_index;
 
