@@ -347,6 +347,7 @@ void Interpreter::GenerateCC(ColorCombiner* comb, const ColorCombinerKey& key) {
                     case G_CCMUX_PRIMITIVE_ALPHA:
                     case G_CCMUX_PRIM_LOD_FRAC:
                     case G_CCMUX_SHADE:
+                    case G_CCMUX_SHADE_ALPHA:
                     case G_CCMUX_ENVIRONMENT:
                     case G_CCMUX_ENV_ALPHA:
                     case G_CCMUX_LOD_FRACTION:
@@ -2211,7 +2212,10 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                 mBufVbo[mBufVboLen++] = mRdp->fog_color.r / 255.0f;
                 mBufVbo[mBufVboLen++] = mRdp->fog_color.g / 255.0f;
                 mBufVbo[mBufVboLen++] = mRdp->fog_color.b / 255.0f;
-                mBufVbo[mBufVboLen++] = v_arr[i]->color.a / 255.0f; // fog factor (not alpha)
+                // G_RM_FOG_PRIM_A uses the fog color register's alpha as a per-draw constant factor
+                const bool fog_alpha_is_constant = ((mRdp->other_mode_l >> 26) & 3) == G_BL_A_FOG;
+                mBufVbo[mBufVboLen++] =
+                    (fog_alpha_is_constant ? mRdp->fog_color.a : v_arr[i]->color.a) / 255.0f; // fog factor (not alpha)
             }
         }
 
@@ -2234,6 +2238,10 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                         break;
                     case G_CCMUX_SHADE:
                         color = &v_arr[i]->color;
+                        break;
+                    case G_CCMUX_SHADE_ALPHA:
+                        tmp.r = tmp.g = tmp.b = v_arr[i]->color.a;
+                        color = &tmp;
                         break;
                     case G_CCMUX_ENVIRONMENT:
                         color = &mRdp->env_color;
