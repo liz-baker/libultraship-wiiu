@@ -617,12 +617,22 @@ static const uint8_t* TileTextureAddr(const RDP* rdp, uint8_t tile) {
 }
 
 static uint32_t GetTileSizeFromCoordinates(float low, float high) {
-    // An unset tile (high <= low) defines no region; return 0 so callers skip the tile-region clamp
-    // instead of collapsing the texture to the phantom 1-texel size the +4 formula would yield.
-    if (high <= low) {
+    // high < low is unset; return 0 so callers skip the tile-region clamp. high == low == 0 is the
+    // common "tile never explicitly sized" default, treated the same way (most games rely on it
+    // meaning "use the whole loaded image", not a literal 1-texel tile) - this exact pair is what
+    // the old "phantom 1-texel" comment here was guarding against.
+    //
+    // Any other high == low (e.g. uls == lrs != 0) is a real hardware degenerate 1-texel tile, not
+    // unset: it's what a half-texel sample-offset bias produces for a genuinely 1-texel image (see
+    // #61 - a GoldenEye texture uses exactly this). Hardware's own tile span is
+    // (high>>2) - (low>>2) + 1 texels (10.2 fixed-point, integer part only); use that instead of
+    // the old "+4, then round" approximation, which this degenerate case defeats.
+    if (high < low || (high == low && high == 0.0f)) {
         return 0;
     }
-    return static_cast<uint32_t>(lroundf((high - low + 4.0f) / 4.0f));
+    uint32_t lowWhole = static_cast<uint32_t>(low) / 4u;
+    uint32_t highWhole = static_cast<uint32_t>(high) / 4u;
+    return highWhole - lowWhole + 1u;
 }
 
 void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
