@@ -296,6 +296,11 @@ struct RDP {
         struct RawTexMetadata raw_tex_metadata;
         bool masked;
         bool blended;
+        // TMEM word offset (64-bit words) the block was loaded at, i.e. the load tile's
+        // own `tmem` at G_LOADBLOCK/G_LOADTILE time. Lets a render tile that shares this
+        // block but starts partway into it (e.g. one mip level of a chain loaded by a
+        // single G_LOADBLOCK) find its own byte offset via TileTmemByteOffset(). See #59.
+        uint16_t tmem_base;
     } loaded_texture[2];
     struct {
         uint8_t fmt;
