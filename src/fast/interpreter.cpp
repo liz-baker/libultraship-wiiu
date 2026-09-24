@@ -2604,13 +2604,22 @@ void Interpreter::GfxDpSetTile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_
     // Fall back to the old two-bucket heuristic ("assume one texture at tmem 0, another at any
     // nonzero tmem") when no loaded block covers this tmem yet, e.g. SETTILE ran before the
     // matching LOADBLOCK/LOADTILE.
+    // Real TMEM is one physical bank; both loaded_texture[] entries can legitimately claim to
+    // cover the same address if a slot's old load was never invalidated even though physical
+    // TMEM has since been overwritten there by a load into the *other* slot. When both match,
+    // prefer the one with the higher load_seq (the one actually loaded most recently) - see #61.
     uint8_t resolvedIndex = tmem != 0;
+    uint32_t resolvedSeq = 0;
+    bool resolved = false;
     for (uint8_t slot = 0; slot < 2; slot++) {
         const auto& loaded = mRdp->loaded_texture[slot];
         uint32_t sizeWords = (loaded.size_bytes + 7) / 8;
         if (sizeWords > 0 && tmem >= loaded.tmem_base && tmem < loaded.tmem_base + sizeWords) {
-            resolvedIndex = slot;
-            break;
+            if (!resolved || loaded.load_seq > resolvedSeq) {
+                resolvedIndex = slot;
+                resolvedSeq = loaded.load_seq;
+                resolved = true;
+            }
         }
     }
     mRdp->texture_tile[tile].tmem_index = resolvedIndex;
@@ -2739,6 +2748,7 @@ void Interpreter::GfxDpLoadBlock(uint8_t tile, uint32_t uls, uint32_t ult, uint3
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr = mRdp->texture_to_load.addr;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tmem_base = mRdp->texture_tile[tile].tmem;
+    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].load_seq = ++mRdp->next_load_seq;
     // fprintf(stderr, "GfxDpLoadBlock: line_size = 0x%x; orig = 0x%x; bpp=%d; lrs=%d\n", size_bytes,
     // orig_size_bytes,
     //         mRdp->texture_to_load.siz, lrs);
@@ -2813,6 +2823,7 @@ void Interpreter::GfxDpLoadTile(uint8_t tile, uint32_t uls, uint32_t ult, uint32
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr = mRdp->texture_to_load.addr + start_offset_bytes;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tmem_base = mRdp->texture_tile[tile].tmem;
+    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].load_seq = ++mRdp->next_load_seq;
 
     const std::string_view texPath =
         mRdp->texture_to_load.raw_tex_metadata.resource != nullptr
