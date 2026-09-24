@@ -2140,6 +2140,15 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         }
     }
 
+    // Some display lists set tile1 == tile0 (same tmem source, same G_SETTILESIZE) to get a
+    // TRILERP combiner without a real mip pyramid. There is no second mip level to blend from
+    // there, so force LOD_FRACTION to 0 (pure texel0) instead of running the vertex-w-distance
+    // hack below, which would otherwise blend in texel1's (different, unrelated) texels.
+    bool same_size_fake_mip =
+        comb->usedTextures[0] && comb->usedTextures[1] && effective_tile[0] != effective_tile[1] &&
+        mRdp->texture_tile[effective_tile[0]].tmem_index == mRdp->texture_tile[effective_tile[1]].tmem_index &&
+        tex_width2[0] > 0 && tex_width2[0] == tex_width2[1] && tex_height2[0] > 0 && tex_height2[0] == tex_height2[1];
+
     struct ShaderProgram* prg = comb->prg[tm];
     if (prg == NULL) {
         comb->prg[tm] = prg =
@@ -2286,19 +2295,21 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                         break;
                     }
                     case G_CCMUX_LOD_FRACTION: {
-                        if (mRdp->other_mode_l & G_TL_LOD) {
+                        float distance_frac = 255.0f;
+                        if ((mRdp->other_mode_l & G_TL_LOD) && !same_size_fake_mip) {
                             // "Hack" that works for Bowser - Peach painting
-                            float distance_frac = (v1->w - 3000.0f) / 3000.0f;
+                            distance_frac = (v1->w - 3000.0f) / 3000.0f;
                             if (distance_frac < 0.0f) {
                                 distance_frac = 0.0f;
                             }
                             if (distance_frac > 1.0f) {
                                 distance_frac = 1.0f;
                             }
-                            tmp.r = tmp.g = tmp.b = tmp.a = distance_frac * 255.0f;
-                        } else {
-                            tmp.r = tmp.g = tmp.b = tmp.a = 255.0f;
+                            distance_frac *= 255.0f;
+                        } else if (mRdp->other_mode_l & G_TL_LOD) {
+                            distance_frac = 0.0f;
                         }
+                        tmp.r = tmp.g = tmp.b = tmp.a = distance_frac;
                         color = &tmp;
                         break;
                     }
