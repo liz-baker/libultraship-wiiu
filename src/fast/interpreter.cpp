@@ -592,6 +592,30 @@ static uint32_t GetEffectiveLineSize(uint32_t lineSizeBytes, uint32_t fullImageL
     return tileLineSizeBytes;
 }
 
+// Byte offset of a tile's own TMEM location within the loaded block its tmem_index
+// resolved to. Multiple render tiles (e.g. mip levels) can share one G_LOADBLOCK; each
+// tile's own texel data starts this many bytes past the block's DRAM source address.
+// TMEM addressing is in 8-byte words regardless of texel format/size. See #59.
+static uint32_t TileTmemByteOffset(const RDP* rdp, uint8_t tile) {
+    const auto& loaded = rdp->loaded_texture[rdp->texture_tile[tile].tmem_index];
+    uint16_t tileTmem = rdp->texture_tile[tile].tmem;
+    if (tileTmem <= loaded.tmem_base) {
+        return 0;
+    }
+    return (tileTmem - loaded.tmem_base) * 8u;
+}
+
+// Same lookup ImportTexture* has always done (loaded_texture[tmem_index].addr), adjusted for
+// where this tile's own data starts within that block. Stays nullptr, rather than an offset
+// past a null base, when the slot has nothing loaded - callers already branch on that.
+static const uint8_t* TileTextureAddr(const RDP* rdp, uint8_t tile) {
+    const uint8_t* base = rdp->loaded_texture[rdp->texture_tile[tile].tmem_index].addr;
+    if (base == nullptr) {
+        return nullptr;
+    }
+    return base + TileTmemByteOffset(rdp, tile);
+}
+
 static uint32_t GetTileSizeFromCoordinates(float low, float high) {
     // An unset tile (high <= low) defines no region; return 0 so callers skip the tile-region clamp
     // instead of collapsing the texture to the phantom 1-texel size the +4 formula would yield.
@@ -607,7 +631,7 @@ void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
         importReplacement && (metadata->resource != nullptr)
             ? mMaskedTextures.find(GetBaseTexturePath(metadata->resource->GetInitData()->Identifier.GetPath()))
                   ->second.replacementData
-            : mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr;
+            : TileTextureAddr(mRdp, tile);
 
     if (addr == nullptr) {
         SPDLOG_ERROR("ImportTextureRgba16: null texture address for tile {}", tile);
@@ -688,7 +712,7 @@ void Interpreter::ImportTextureRgba32(int tile, bool importReplacement) {
         importReplacement && (metadata->resource != nullptr)
             ? mMaskedTextures.find(GetBaseTexturePath(metadata->resource->GetInitData()->Identifier.GetPath()))
                   ->second.replacementData
-            : mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr;
+            : TileTextureAddr(mRdp, tile);
 
     if (addr == nullptr) {
         SPDLOG_ERROR("ImportTextureRgba32: null texture address for tile {}", tile);
@@ -760,7 +784,7 @@ void Interpreter::ImportTextureIA4(int tile, bool importReplacement) {
         importReplacement && (metadata->resource != nullptr)
             ? mMaskedTextures.find(GetBaseTexturePath(metadata->resource->GetInitData()->Identifier.GetPath()))
                   ->second.replacementData
-            : mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr;
+            : TileTextureAddr(mRdp, tile);
 
     if (addr == nullptr) {
         SPDLOG_ERROR("ImportTextureIA4: null texture address for tile {}", tile);
@@ -813,7 +837,7 @@ void Interpreter::ImportTextureIA8(int tile, bool importReplacement) {
         importReplacement && (metadata->resource != nullptr)
             ? mMaskedTextures.find(GetBaseTexturePath(metadata->resource->GetInitData()->Identifier.GetPath()))
                   ->second.replacementData
-            : mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr;
+            : TileTextureAddr(mRdp, tile);
 
     if (addr == nullptr) {
         SPDLOG_ERROR("ImportTextureIA8: null texture address for tile {}", tile);
@@ -856,7 +880,7 @@ void Interpreter::ImportTextureIA16(int tile, bool importReplacement) {
         importReplacement && (metadata->resource != nullptr)
             ? mMaskedTextures.find(GetBaseTexturePath(metadata->resource->GetInitData()->Identifier.GetPath()))
                   ->second.replacementData
-            : mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr;
+            : TileTextureAddr(mRdp, tile);
 
     if (addr == nullptr) {
         SPDLOG_ERROR("ImportTextureIA16: null texture address for tile {}", tile);
@@ -907,7 +931,7 @@ void Interpreter::ImportTextureI4(int tile, bool importReplacement) {
         importReplacement && (metadata->resource != nullptr)
             ? mMaskedTextures.find(GetBaseTexturePath(metadata->resource->GetInitData()->Identifier.GetPath()))
                   ->second.replacementData
-            : mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr;
+            : TileTextureAddr(mRdp, tile);
 
     if (addr == nullptr) {
         SPDLOG_ERROR("ImportTextureI4: null texture address for tile {}", tile);
@@ -967,7 +991,7 @@ void Interpreter::ImportTextureI8(int tile, bool importReplacement) {
         importReplacement && (metadata->resource != nullptr)
             ? mMaskedTextures.find(GetBaseTexturePath(metadata->resource->GetInitData()->Identifier.GetPath()))
                   ->second.replacementData
-            : mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr;
+            : TileTextureAddr(mRdp, tile);
 
     if (addr == nullptr) {
         SPDLOG_ERROR("ImportTextureI8: null texture address for tile {}", tile);
@@ -1010,7 +1034,7 @@ void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
         importReplacement && (metadata->resource != nullptr)
             ? mMaskedTextures.find(GetBaseTexturePath(metadata->resource->GetInitData()->Identifier.GetPath()))
                   ->second.replacementData
-            : mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr;
+            : TileTextureAddr(mRdp, tile);
 
     if (addr == nullptr) {
         SPDLOG_ERROR("ImportTextureCi4: null texture address for tile {}", tile);
@@ -1102,7 +1126,7 @@ void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
         importReplacement && (metadata->resource != nullptr)
             ? mMaskedTextures.find(GetBaseTexturePath(metadata->resource->GetInitData()->Identifier.GetPath()))
                   ->second.replacementData
-            : mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr;
+            : TileTextureAddr(mRdp, tile);
 
     if (addr == nullptr) {
         SPDLOG_ERROR("ImportTextureCi8: null texture address for tile {}", tile);
@@ -1184,7 +1208,7 @@ void Interpreter::ImportTextureImg(int tile, bool importReplacement) {
         importReplacement && (metadata->resource != nullptr)
             ? mMaskedTextures.find(GetBaseTexturePath(metadata->resource->GetInitData()->Identifier.GetPath()))
                   ->second.replacementData
-            : mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr;
+            : TileTextureAddr(mRdp, tile);
 
     if (addr == nullptr) {
         SPDLOG_ERROR("ImportTextureImg: null texture address for tile {}", tile);
@@ -1202,7 +1226,7 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
         importReplacement && (metadata->resource != nullptr)
             ? mMaskedTextures.find(GetBaseTexturePath(metadata->resource->GetInitData()->Identifier.GetPath()))
                   ->second.replacementData
-            : mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr;
+            : TileTextureAddr(mRdp, tile);
 
     if (addr == nullptr) {
         SPDLOG_ERROR("ImportTextureRaw: null texture address for tile {}", tile);
@@ -1305,7 +1329,7 @@ void Interpreter::ImportTexture(int i, int tile, bool importReplacement) {
         importReplacement && (metadata->resource != nullptr)
             ? mMaskedTextures.find(GetBaseTexturePath(metadata->resource->GetInitData()->Identifier.GetPath()))
                   ->second.replacementData
-            : mRdp->loaded_texture[tmemIdex].addr;
+            : TileTextureAddr(mRdp, tile);
 
     // Check if this texture address is a registered GPU framebuffer mirror.
     // If so, bind the GPU FB directly — full resolution, no CPU readback needed.
@@ -2561,10 +2585,24 @@ void Interpreter::GfxDpSetTile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_
     mRdp->texture_tile[tile].line_size_bytes = line * 8;
 
     mRdp->texture_tile[tile].tmem = tmem;
-    // mRdp->texture_tile[tile].tmem_index = tmem / 256; // tmem is the 64-bit word offset, so 256 words means 2 kB
 
-    mRdp->texture_tile[tile].tmem_index =
-        tmem != 0; // assume one texture is loaded at address 0 and another texture at any other address
+    // Pick the loaded_texture[] slot whose TMEM range actually covers this tile. A tile's own
+    // tmem can land inside a block loaded for a different tile - e.g. a mip chain loaded by one
+    // G_LOADBLOCK, with each mip level's render tile pointing partway into it (see #59) - so a
+    // tile with a nonzero tmem is not necessarily a second, independently-loaded texture.
+    // Fall back to the old two-bucket heuristic ("assume one texture at tmem 0, another at any
+    // nonzero tmem") when no loaded block covers this tmem yet, e.g. SETTILE ran before the
+    // matching LOADBLOCK/LOADTILE.
+    uint8_t resolvedIndex = tmem != 0;
+    for (uint8_t slot = 0; slot < 2; slot++) {
+        const auto& loaded = mRdp->loaded_texture[slot];
+        uint32_t sizeWords = (loaded.size_bytes + 7) / 8;
+        if (sizeWords > 0 && tmem >= loaded.tmem_base && tmem < loaded.tmem_base + sizeWords) {
+            resolvedIndex = slot;
+            break;
+        }
+    }
+    mRdp->texture_tile[tile].tmem_index = resolvedIndex;
 
     mRdp->textures_changed[0] = true;
     mRdp->textures_changed[1] = true;
@@ -2689,6 +2727,7 @@ void Interpreter::GfxDpLoadBlock(uint8_t tile, uint32_t uls, uint32_t ult, uint3
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tex_flags = mRdp->texture_to_load.tex_flags;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr = mRdp->texture_to_load.addr;
+    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tmem_base = mRdp->texture_tile[tile].tmem;
     // fprintf(stderr, "GfxDpLoadBlock: line_size = 0x%x; orig = 0x%x; bpp=%d; lrs=%d\n", size_bytes,
     // orig_size_bytes,
     //         mRdp->texture_to_load.siz, lrs);
@@ -2762,6 +2801,7 @@ void Interpreter::GfxDpLoadTile(uint8_t tile, uint32_t uls, uint32_t ult, uint32
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tex_flags = mRdp->texture_to_load.tex_flags;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr = mRdp->texture_to_load.addr + start_offset_bytes;
+    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tmem_base = mRdp->texture_tile[tile].tmem;
 
     const std::string_view texPath =
         mRdp->texture_to_load.raw_tex_metadata.resource != nullptr
