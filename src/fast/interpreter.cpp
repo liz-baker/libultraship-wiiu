@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <vector>
 #include <list>
+#include <utility>
 #include <stack>
 #include "fast/resource/type/Light.h"
 
@@ -3038,7 +3039,12 @@ void Interpreter::GfxDpTextureRectangle(int32_t ulx, int32_t uly, int32_t lrx, i
     if ((mRdp->other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_COPY) {
         // Per RDP Command Summary Set Tile's shift s and this dsdx should be set to 4 texels
         // Divide by 4 to get 1 instead
-        dsdx >>= 2;
+        // (the X step is dtdy once the flip fields are transposed below)
+        if (flip) {
+            dtdy >>= 2;
+        } else {
+            dsdx >>= 2;
+        }
 
         // Color combiner is turned off in copy mode
         GfxDpSetCombineMode(color_comb(0, 0, 0, G_CCMUX_TEXEL0), alpha_comb(0, 0, 0, G_ACMUX_TEXEL0), 0, 0);
@@ -3053,8 +3059,11 @@ void Interpreter::GfxDpTextureRectangle(int32_t ulx, int32_t uly, int32_t lrx, i
     // lrx, lry, ulx, uly are U10.2
     // lrs, lrt are S10.5
     if (flip) {
-        dsdx = -dsdx;
-        dtdy = -dtdy;
+        // On the RDP a flipped rectangle transposes the texture coordinates: the start/step fields as given
+        // (uls/dsdx and ult/dtdy, as packed by gSPTextureRectangleFlip) feed T along X and S along Y, and are
+        // not negated. Transpose them so the code below can treat uls/dsdx as S and ult/dtdy as T.
+        std::swap(uls, ult);
+        std::swap(dsdx, dtdy);
     }
     int16_t width = !flip ? lrx - ulx : lry - uly;
     int16_t height = !flip ? lry - uly : lrx - ulx;
