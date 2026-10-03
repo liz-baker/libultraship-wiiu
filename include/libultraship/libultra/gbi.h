@@ -4174,13 +4174,15 @@ typedef union Gfx {
         _g->words.w1 = (_SHIFTL(dsdx, 16, 16) | _SHIFTL(dtdy, 0, 16));                         \
     })
 
+/* NOTE: Like the console SDK, the Flip variants swap the packed fields relative to the non-flip macros
+ * (t high / s low, dtdy high / dsdx low). Pass the same arguments as on hardware. */
 #define gsDPTextureRectangleFlip(xl, yl, xh, yh, tile, s, t, dsdx, dtdy)                     \
     {                                                                                        \
         (_SHIFTL(G_TEXRECTFLIP, 24, 8) | _SHIFTL(xh, 12, 12) | _SHIFTL(yh, 0, 12)),          \
         (_SHIFTL(tile, 24, 3) | _SHIFTL(xl, 12, 12) | _SHIFTL(yl, 0, 12)),                   \
     },                                                                                       \
     {                                                                                        \
-        _SHIFTL(s, 16, 16) | _SHIFTL(t, 0, 16), _SHIFTL(dsdx, 16, 16) | _SHIFTL(dtdy, 0, 16) \
+        _SHIFTL(t, 16, 16) | _SHIFTL(s, 0, 16), _SHIFTL(dtdy, 16, 16) | _SHIFTL(dsdx, 0, 16) \
     }
 
 #define gDPTextureRectangleFlip(pkt, xl, yl, xh, yh, tile, s, t, dsdx, dtdy)                       \
@@ -4191,8 +4193,8 @@ typedef union Gfx {
         _g->words.w0 = (_SHIFTL(G_TEXRECTFLIP, 24, 8) | _SHIFTL(xh, 12, 12) | _SHIFTL(yh, 0, 12)); \
         _g->words.w1 = (_SHIFTL(tile, 24, 3) | _SHIFTL(xl, 12, 12) | _SHIFTL(yl, 0, 12));          \
         _g++;                                                                                      \
-        _g->words.w0 = (_SHIFTL(s, 16, 16) | _SHIFTL(t, 0, 16));                                   \
-        _g->words.w1 = (_SHIFTL(dsdx, 16, 16) | _SHIFTL(dtdy, 0, 16));                             \
+        _g->words.w0 = (_SHIFTL(t, 16, 16) | _SHIFTL(s, 0, 16));                                   \
+        _g->words.w1 = (_SHIFTL(dtdy, 16, 16) | _SHIFTL(dsdx, 0, 16));                             \
     })
 
 #define gsSPTextureRectangle(xl, yl, xh, yh, tile, s, t, dsdx, dtdy)        \
@@ -4257,11 +4259,13 @@ typedef union Gfx {
         gImmp1(pkt, G_RDPHALF_2, (_SHIFTL((dsdx), 16, 16) | _SHIFTL((dtdy), 0, 16)));                              \
     })
 
+/* NOTE: Like the console SDK, the Flip variants swap the packed fields relative to the non-flip macros
+ * (t high / s low, dtdy high / dsdx low). Pass the same arguments as on hardware. */
 #define gsSPTextureRectangleFlip(xl, yl, xh, yh, tile, s, t, dsdx, dtdy)        \
     (_SHIFTL(G_TEXRECTFLIP, 24, 8) | _SHIFTL(xh, 12, 12) | _SHIFTL(yh, 0, 12)), \
         (_SHIFTL(tile, 24, 3) | _SHIFTL(xl, 12, 12) | _SHIFTL(yl, 0, 12)),      \
-        gsImmp1(G_RDPHALF_1, (_SHIFTL(s, 16, 16) | _SHIFTL(t, 0, 16))),         \
-        gsImmp1(G_RDPHALF_2, (_SHIFTL(dsdx, 16, 16) | _SHIFTL(dtdy, 0, 16)))
+        gsImmp1(G_RDPHALF_1, (_SHIFTL(t, 16, 16) | _SHIFTL(s, 0, 16))),         \
+        gsImmp1(G_RDPHALF_2, (_SHIFTL(dtdy, 16, 16) | _SHIFTL(dsdx, 0, 16)))
 
 #define gSPTextureRectangleFlip(pkt, xl, yl, xh, yh, tile, s, t, dsdx, dtdy)                       \
     _DW({                                                                                          \
@@ -4269,8 +4273,8 @@ typedef union Gfx {
                                                                                                    \
         _g->words.w0 = (_SHIFTL(G_TEXRECTFLIP, 24, 8) | _SHIFTL(xh, 12, 12) | _SHIFTL(yh, 0, 12)); \
         _g->words.w1 = (_SHIFTL(tile, 24, 3) | _SHIFTL(xl, 12, 12) | _SHIFTL(yl, 0, 12));          \
-        gImmp1(pkt, G_RDPHALF_1, (_SHIFTL(s, 16, 16) | _SHIFTL(t, 0, 16)));                        \
-        gImmp1(pkt, G_RDPHALF_2, (_SHIFTL(dsdx, 16, 16) | _SHIFTL(dtdy, 0, 16)));                  \
+        gImmp1(pkt, G_RDPHALF_1, (_SHIFTL(t, 16, 16) | _SHIFTL(s, 0, 16)));                        \
+        gImmp1(pkt, G_RDPHALF_2, (_SHIFTL(dtdy, 16, 16) | _SHIFTL(dsdx, 0, 16)));                  \
     })
 
 #define gsDPWord(wordhi, wordlo) \
