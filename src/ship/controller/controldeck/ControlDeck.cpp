@@ -28,7 +28,6 @@ ControlDeck::~ControlDeck() {
 
 void ControlDeck::Init(uint8_t* controllerBits) {
     mControllerBits = controllerBits;
-    *mControllerBits |= 1 << 0;
 
     mWheelHandler = std::make_shared<WheelHandler>(GetWindow());
 
@@ -50,6 +49,15 @@ void ControlDeck::Init(uint8_t* controllerBits) {
         mPorts[0]->GetConnectedController()->AddDefaultMappings(PhysicalDeviceType::Keyboard);
         mPorts[0]->GetConnectedController()->AddDefaultMappings(PhysicalDeviceType::Mouse);
         mPorts[0]->GetConnectedController()->AddDefaultMappings(PHYSICAL_DEVICE_TYPE_GAMEPAD);
+    }
+
+    // port 1 is always reported as connected; the others only if they have mappings
+    *mControllerBits |= 1 << 0;
+    for (size_t i = 1; i < mPorts.size() && i < 8; i++) {
+        auto controller = mPorts[i]->GetConnectedController();
+        if (controller != nullptr && controller->IsConnected()) {
+            *mControllerBits |= 1 << i;
+        }
     }
 
     MarkInitialized();
@@ -115,6 +123,9 @@ bool ControlDeck::MouseGameInputBlocked() {
 }
 
 std::shared_ptr<Controller> ControlDeck::GetControllerByPort(uint8_t port) {
+    if (port >= mPorts.size()) {
+        return nullptr;
+    }
     return mPorts[port]->GetConnectedController();
 }
 

@@ -198,6 +198,10 @@ std::shared_ptr<ControllerButton> Controller::GetButtonByBitmask(CONTROLLERBUTTO
     return mButtons[bitmask];
 }
 
+bool Controller::IsConnected() {
+    return !GetAllMappings().empty();
+}
+
 std::vector<std::shared_ptr<ControllerMapping>> Controller::GetAllMappings() {
     std::vector<std::shared_ptr<ControllerMapping>> allMappings;
     for (auto [bitmask, button] : GetAllButtons()) {
@@ -214,7 +218,9 @@ std::vector<std::shared_ptr<ControllerMapping>> Controller::GetAllMappings() {
         }
     }
 
-    allMappings.push_back(GetGyro()->GetGyroMapping());
+    if (auto gyroMapping = GetGyro()->GetGyroMapping(); gyroMapping != nullptr) {
+        allMappings.push_back(gyroMapping);
+    }
 
     for (auto [id, mapping] : GetRumble()->GetAllRumbleMappings()) {
         allMappings.push_back(mapping);
