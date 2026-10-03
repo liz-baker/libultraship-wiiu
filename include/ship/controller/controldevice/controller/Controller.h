@@ -59,14 +59,8 @@ class Controller : public ControlDevice {
      */
     void ReloadAllMappingsFromConfig();
 
-    /** @brief Returns true if at least one physical device mapping is active for any button. */
-    bool IsConnected() const;
-
-    /** @brief Marks the controller as "connected" (used by the mapping layer). */
-    void Connect();
-
-    /** @brief Marks the controller as "disconnected" and clears transient state. */
-    void Disconnect();
+    /** @brief Returns true if this controller has at least one mapping of any kind. */
+    bool IsConnected();
 
     /** @brief Removes all mappings for all buttons, sticks, rumble, LED, and gyro. */
     void ClearAllMappings();
