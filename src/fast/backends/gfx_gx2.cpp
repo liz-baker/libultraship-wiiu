@@ -42,7 +42,7 @@
 #include <proc_ui/procui.h>
 #include <coreinit/memory.h>
 
-#define ALIGN(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
+#define ALIGN(x, align) (((x) + ((align)-1)) & ~((align)-1))
 
 // 96 Mb (should be more than enough to draw everything without waiting for the GPU)
 #define DRAW_BUFFER_SIZE 0x6000000

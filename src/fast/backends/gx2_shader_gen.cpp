@@ -10,7 +10,7 @@
 #include <malloc.h>
 #include <gx2/mem.h>
 
-#define ROUNDUP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
+#define ROUNDUP(x, align) (((x) + ((align)-1)) & ~((align)-1))
 
 #define FRAG_COORD_REG _R0
 #define TEXEL_REG _R1

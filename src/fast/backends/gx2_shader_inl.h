@@ -168,7 +168,7 @@
 #define SCL_221 | to_QWORD(0, to_LE(ALU_SCL_221 << 18))
 
 #define FETCH_TYPE(x) x
-#define MINI(x) ((x) - 1)
+#define MINI(x) ((x)-1)
 #define MEGA(x) (MINI(x) | 0x80000000)
 #define OFFSET(x) x
 

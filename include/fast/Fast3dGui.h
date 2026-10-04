@@ -38,7 +38,7 @@ typedef struct {
             void* Context; ///< SDL_GLContext
         } Opengl;
         struct {
-            void* Window;           ///< SDL_Window*
+            void* Window; ///< SDL_Window*
 #ifndef __WIIU__
             SDL_Renderer* Renderer; ///< SDL_Renderer* (for Metal layer)
 #else
