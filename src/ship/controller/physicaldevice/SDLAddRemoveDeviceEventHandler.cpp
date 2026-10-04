@@ -1,5 +1,7 @@
 #include "ship/controller/physicaldevice/SDLAddRemoveDeviceEventHandler.h"
+#ifndef __WIIU__
 #include <SDL2/SDL.h>
+#endif
 #include "ship/Context.h"
 #include "ship/controller/controldeck/ControlDeck.h"
 #include "ship/window/Window.h"
@@ -17,9 +19,10 @@ void SDLAddRemoveDeviceEventHandler::DrawElement() {
 }
 
 void SDLAddRemoveDeviceEventHandler::UpdateElement() {
+    bool changed = false;
+#ifndef __WIIU__
     SDL_PumpEvents();
     SDL_Event event;
-    bool changed = false;
     while (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_CONTROLLERDEVICEADDED, SDL_CONTROLLERDEVICEADDED) > 0) {
         // from https://wiki.libsdl.org/SDL2/SDL_ControllerDeviceEvent: which - the joystick device index for
         // the SDL_CONTROLLERDEVICEADDED event
@@ -37,6 +40,7 @@ void SDLAddRemoveDeviceEventHandler::UpdateElement() {
             ->HandlePhysicalDeviceDisconnect(event.cdevice.which);
         changed = true;
     }
+#endif
 
     // The connected controller set changed, so re-point the ImGui gamepad
     // backend at it (keeps menu navigation working across hotplug).

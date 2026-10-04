@@ -2,9 +2,19 @@
 #include "ship/controller/controldevice/controller/mapping/keyboard/KeyboardScancodes.h"
 #include <cstring>
 #include <iostream>
+#ifndef __WIIU__
 #include <SDL2/SDL.h>
+#endif
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#ifdef __WIIU__
+#include <spdlog/sinks/udp_sink.h>
+#include <whb/log.h>
+#include <whb/sdcard.h>
+#include <coreinit/thread.h>
+#include <coreinit/time.h>
+#include "ship/utils/filesystemtools/Directory.h"
+#endif
 #include "ship/install_config.h"
 #include "ship/config/ConsoleVariable.h"
 #include "ship/controller/controldeck/ControlDeck.h"
@@ -30,6 +40,52 @@
 #endif
 
 namespace Ship {
+namespace {
+#if defined(__WIIU__)
+// Wii U has no SDL (and so no SDL_GetPrefPath()) to resolve and create a per-app writable
+// directory the way every other platform below does - this fills that gap the same way
+// SDL_GetPrefPath() does on the SDL platforms: mount whatever backs the path (the SD card
+// here), create the directory if it isn't there yet, and hand back an absolute path that's
+// guaranteed writable by the time this returns. WHBMountSdCard() isn't guaranteed to succeed
+// on the very first call right at boot - the console's SD/FS subsystem isn't always ready the
+// instant a process starts - so this retries a few times before giving up; a genuinely absent/
+// unmounted SD card still fails every attempt and gets logged rather than silently returning a
+// path nothing can actually write to.
+std::string WiiUAppDirectoryPath(const std::string& appName) {
+    constexpr int kMountAttempts = 5;
+    constexpr OSTime kMountRetryDelayMs = 200;
+
+    bool mounted = false;
+    for (int attempt = 1; attempt <= kMountAttempts; attempt++) {
+        if (WHBMountSdCard()) {
+            mounted = true;
+            break;
+        }
+        WHBLogPrintf("Context::GetAppDirectoryPath: WHBMountSdCard() failed (attempt %d/%d)", attempt, kMountAttempts);
+        if (attempt < kMountAttempts) {
+            OSSleepTicks(OSMillisecondsToTicks(kMountRetryDelayMs));
+        }
+    }
+    if (!mounted) {
+        WHBLogPrint("Context::GetAppDirectoryPath: giving up on SD card mount after retries");
+        return ".";
+    }
+
+    // WHBGetSdCardMountPath() has no trailing slash (e.g. "/vol/external01").
+    const std::string path = std::string(WHBGetSdCardMountPath()) + "/wiiu/apps/" + appName + "/";
+
+    // CreateDirectory() swallows its own failures, so confirm the directory actually exists
+    // before treating this path as guaranteed-writable.
+    Directory::CreateDirectory(path);
+    if (!Directory::Exists(path)) {
+        WHBLogPrintf("Context::GetAppDirectoryPath: failed to create %s", path.c_str());
+        return ".";
+    }
+    return path;
+}
+#endif
+} // namespace
+
 std::unique_ptr<Context> Context::mContext;
 
 Context* Context::GetRawInstance() {
@@ -168,6 +224,17 @@ bool Context::InitLogging(spdlog::level::level_enum debugBuildLogLevel,
         auto logPath = GetPathRelativeToAppDirectory(("logs/" + GetName() + ".log"));
         auto fileSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(logPath, 1024 * 1024 * 10, 10);
         sinks.push_back(fileSink);
+
+#ifdef __WIIU__
+        // Broadcast logs over UDP so they show up in a UDP log listener on the LAN. There's no
+        // useful stdout on console, and this is the only sink most Wii U debugging setups have.
+        // Host/port are fixed (not user-configurable) and match the SERVER_PORT/INADDR_BROADCAST
+        // convention devkitPro's WHBLogUdpInit() already uses elsewhere in this codebase
+        // (see Ship::WiiU::Init(), WiiUImpl.cpp), so existing Wii U UDP log tools pick it up.
+        spdlog::sinks::udp_sink_config udpConfig("255.255.255.255", 4405);
+        sinks.push_back(std::make_shared<spdlog::sinks::udp_sink_mt>(udpConfig));
+#endif
+
 #ifdef _DEBUG
         mLogger = std::make_shared<spdlog::logger>("multi_sink", sinks.begin(), sinks.end());
         GetLogger()->set_level(debugBuildLogLevel);
@@ -246,8 +313,10 @@ bool Context::InitResourceManager(const std::vector<std::string>& archivePaths,
     }
 
     if (!allowEmptyPaths && !GetResourceManager()->IsLoaded()) {
+#ifndef __WIIU__
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "OTR file not found",
                                  "Main OTR file not found. Please generate one", nullptr);
+#endif
         SPDLOG_ERROR("Main OTR file not found!");
 #ifdef __IOS__
         // We need this exit to close the app when we dismiss the dialog
@@ -271,6 +340,7 @@ bool Context::InitControlDeck(std::shared_ptr<ControlDeck> controlDeck) {
         return false;
     }
 
+#ifndef __WIIU__
     // Bring up the SDL game-controller subsystem here rather than in osContInit, so controllers work
     // in pre-game UI (e.g. navigating extraction prompts). osContInit still runs ControlDeck::Init(),
     // which needs the game's controllerBits.
@@ -285,6 +355,7 @@ bool Context::InitControlDeck(std::shared_ptr<ControlDeck> controlDeck) {
     if (SDL_Init(SDL_INIT_GAMECONTROLLER) != 0) {
         SPDLOG_WARN("Failed to initialize SDL game controllers ({})", SDL_GetError());
     }
+#endif
 
     return true;
 }
@@ -537,6 +608,10 @@ std::string Context::GetAppBundlePath() {
 }
 
 std::string Context::GetAppDirectoryPath(const std::string& appName) {
+#if defined(__WIIU__)
+    return WiiUAppDirectoryPath(appName.empty() ? "libultraship" : appName);
+#endif
+
 #if defined(__ANDROID__)
     const char* externaldir = SDL_AndroidGetExternalStoragePath();
     if (externaldir != NULL) {

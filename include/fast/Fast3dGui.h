@@ -1,5 +1,7 @@
 #pragma once
+#ifndef __WIIU__
 #include <SDL2/SDL.h>
+#endif
 
 #include "Fast3dWindow.h"
 #include "ship/window/gui/Gui.h"
@@ -37,7 +39,11 @@ typedef struct {
         } Opengl;
         struct {
             void* Window;           ///< SDL_Window*
+#ifndef __WIIU__
             SDL_Renderer* Renderer; ///< SDL_Renderer* (for Metal layer)
+#else
+            void* Renderer;
+#endif
         } Metal;
         struct {
             uint32_t Width;  ///< Framebuffer width in pixels.

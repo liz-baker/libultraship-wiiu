@@ -4,10 +4,12 @@
 #include <algorithm>
 #include "ship/Context.h"
 #include "ship/config/ConsoleVariable.h"
+#ifndef __WIIU__
 #if __APPLE__
 #include <SDL_events.h>
 #else
 #include <SDL2/SDL_events.h>
+#endif
 #endif
 #include <spdlog/spdlog.h>
 #include "ship/utils/StringHelper.h"
@@ -187,7 +189,9 @@ std::vector<std::shared_ptr<ControllerMapping>> Controller::GetAllMappings() {
         }
     }
 
-    allMappings.push_back(GetGyro()->GetGyroMapping());
+    if (auto gyroMapping = GetGyro()->GetGyroMapping(); gyroMapping != nullptr) {
+        allMappings.push_back(gyroMapping);
+    }
 
     for (auto [id, mapping] : GetRumble()->GetAllRumbleMappings()) {
         allMappings.push_back(mapping);

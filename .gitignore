@@ -374,3 +374,5 @@ extern/nlohmann-json/*_jsonConfig*
 build*
 # clang-format.exe fetched by run-clang-format.ps1
 /clang-format.exe
+# ...but never ignore GitHub Actions workflow files named build-*.yml
+!.github/workflows/build*

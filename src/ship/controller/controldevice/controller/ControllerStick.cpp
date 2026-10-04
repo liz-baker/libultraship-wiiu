@@ -128,7 +128,7 @@ void ControllerStick::AddAxisDirectionMapping(Direction direction,
 }
 
 void ControllerStick::AddDefaultMappings(PhysicalDeviceType physicalDeviceType) {
-    if (physicalDeviceType == PhysicalDeviceType::SDLGamepad) {
+    if (physicalDeviceType == PHYSICAL_DEVICE_TYPE_GAMEPAD) {
         for (auto mapping :
              AxisDirectionMappingFactory::CreateDefaultSDLAxisDirectionMappings(mPortIndex, mStickIndex)) {
             AddAxisDirectionMapping(mapping->GetDirection(), mapping);

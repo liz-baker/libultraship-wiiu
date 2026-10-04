@@ -1,5 +1,7 @@
 #include "libultraship/libultraship.h"
+#ifndef __WIIU__
 #include <SDL2/SDL.h>
+#endif
 #include <ratio>
 
 // Establish a chrono duration for the N64 46.875MHz clock rate

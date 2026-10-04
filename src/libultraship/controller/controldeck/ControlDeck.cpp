@@ -54,7 +54,9 @@ void ControlDeck::WriteToPad(void* pad) {
 }
 
 void ControlDeck::WriteToOSContPad(OSContPad* pad) {
+#ifndef __WIIU__
     SDL_PumpEvents();
+#endif
     Ship::WheelHandler::GetInstance()->Update();
 
     if (AllGameInputBlocked()) {

@@ -1,5 +1,7 @@
 #include "ship/controller/controldevice/controller/mapping/factories/LEDMappingFactory.h"
+#ifndef __WIIU__
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLLEDMapping.h"
+#endif
 #include "ship/config/ConsoleVariable.h"
 #include "ship/utils/StringHelper.h"
 #include "ship/controller/controldeck/ControlDeck.h"
@@ -24,9 +26,11 @@ std::shared_ptr<ControllerLEDMapping> LEDMappingFactory::CreateLEDMappingFromCon
         return nullptr;
     }
 
+#ifndef __WIIU__
     if (mappingClass == "SDLLEDMapping") {
         return std::make_shared<SDLLEDMapping>(portIndex, colorSource, savedColor);
     }
+#endif
 
     return nullptr;
 }
@@ -34,6 +38,7 @@ std::shared_ptr<ControllerLEDMapping> LEDMappingFactory::CreateLEDMappingFromCon
 std::shared_ptr<ControllerLEDMapping> LEDMappingFactory::CreateLEDMappingFromSDLInput(uint8_t portIndex) {
     std::shared_ptr<ControllerLEDMapping> mapping = nullptr;
 
+#ifndef __WIIU__
     for (auto [instanceId, gamepad] : Context::GetRawInstance()
                                           ->GetControlDeck()
                                           ->GetConnectedPhysicalDeviceManager()
@@ -71,6 +76,7 @@ std::shared_ptr<ControllerLEDMapping> LEDMappingFactory::CreateLEDMappingFromSDL
             break;
         }
     }
+#endif
 
     return mapping;
 }
