@@ -7,7 +7,8 @@
 namespace Ship {
 namespace WiiU {
 
-// Platform bring-up: logging, working directory, and native VPAD/KPAD input.
+// Platform bring-up: logging and native VPAD/KPAD input. Idempotent; called by
+// the Context, so consumers don't call it themselves.
 void Init(const std::string& shortName);
 
 void Exit();
