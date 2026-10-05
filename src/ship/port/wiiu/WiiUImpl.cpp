@@ -50,6 +50,14 @@ static const devoptab_t dotab_stdout = {
 #endif
 
 void Init(const std::string& shortName) {
+    // Context::GetAppDirectoryPath() can run before the Context exists, so both
+    // paths call this; only the first does the bring-up.
+    static bool initialized = false;
+    if (initialized) {
+        return;
+    }
+    initialized = true;
+
 #ifdef _DEBUG
     WHBLogUdpInit();
     WHBLogPrint("Hello World!");

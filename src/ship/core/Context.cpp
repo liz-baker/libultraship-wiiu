@@ -14,6 +14,7 @@
 #include <coreinit/thread.h>
 #include <coreinit/time.h>
 #include "ship/utils/filesystemtools/Directory.h"
+#include "ship/port/wiiu/WiiUImpl.h"
 #endif
 #include "ship/install_config.h"
 #include "ship/config/ConsoleVariable.h"
@@ -66,6 +67,8 @@ void ClearBridgeCachesIfPresent(Context* context) {
 // unmounted SD card still fails every attempt and gets logged rather than silently returning a
 // path nothing can actually write to.
 std::string WiiUAppDirectoryPath(const std::string& appName) {
+    Ship::WiiU::Init(appName);
+
     constexpr int kMountAttempts = 5;
     constexpr OSTime kMountRetryDelayMs = 200;
 
@@ -301,6 +304,9 @@ std::shared_ptr<Context> Context::CreateInstance(const std::string& name, const 
 
 Context::Context(std::string name, std::string shortName)
     : Component(std::move(name)), mShortName(std::move(shortName)), mInitTime(std::chrono::steady_clock::now()) {
+#ifdef __WIIU__
+    Ship::WiiU::Init(mShortName);
+#endif
 }
 
 const std::string& Context::GetShortName() const {
