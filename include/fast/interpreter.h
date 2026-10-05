@@ -442,6 +442,11 @@ class Interpreter {
     void SetNativeDimensions(float width, float height);
     void SetResolutionMultiplier(float multiplier);
     void SetMsaaLevel(uint32_t level);
+    // Shifts the presented game image vertically by `nativeLines` native-resolution lines (positive = down),
+    // revealing black at the uncovered edge. Emulates the N64 VI vStart shake; applies to the next presented frame
+    // and persists until changed (pass 0 to clear).
+    void SetPresentOffsetY(int nativeLines);
+    int GetPresentOffsetY() const;
     void GetCurDimensions(uint32_t* width, uint32_t* height);
 
     // private: TODO make these private
@@ -557,6 +562,7 @@ class Interpreter {
     uintptr_t mGfxFrameBuffer{};
 
     unsigned int mMsaaLevel = 1;
+    int mPresentOffsetY = 0;
     bool mDroppedFrame{};
     float* mBufVbo; // 3 vertices in a triangle and 32 floats per vtx
     size_t mBufVboLen{};

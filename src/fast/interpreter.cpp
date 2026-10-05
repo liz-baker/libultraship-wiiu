@@ -5749,6 +5749,14 @@ void Interpreter::SetMsaaLevel(uint32_t level) {
     mMsaaLevel = level;
 }
 
+void Interpreter::SetPresentOffsetY(int nativeLines) {
+    mPresentOffsetY = nativeLines;
+}
+
+int Interpreter::GetPresentOffsetY() const {
+    return mPresentOffsetY;
+}
+
 void Interpreter::GetCurDimensions(uint32_t* width, uint32_t* height) {
     *width = mCurDimensions.width;
     *height = mCurDimensions.height;
