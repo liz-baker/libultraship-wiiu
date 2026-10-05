@@ -1,10 +1,15 @@
 #pragma once
 
 #include <unordered_map>
+#include <cstdint>
 #include <unordered_set>
 #include <vector>
 #include <string>
+#ifndef __WIIU__
 #include <SDL2/SDL.h>
+#else
+typedef struct _SDL_GameController SDL_GameController;
+#endif
 
 namespace Ship {
 

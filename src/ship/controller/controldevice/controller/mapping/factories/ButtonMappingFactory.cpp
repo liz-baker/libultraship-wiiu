@@ -5,11 +5,18 @@
 #include "ship/controller/controldevice/controller/mapping/keyboard/KeyboardKeyToButtonMapping.h"
 #include "ship/controller/controldevice/controller/mapping/mouse/MouseButtonToButtonMapping.h"
 #include "ship/controller/controldevice/controller/mapping/mouse/MouseWheelToButtonMapping.h"
+#ifndef __WIIU__
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLButtonToButtonMapping.h"
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLAxisDirectionToButtonMapping.h"
+#endif
 #include "ship/controller/controldevice/controller/mapping/keyboard/KeyboardScancodes.h"
 #include "ship/controller/controldevice/controller/mapping/mouse/WheelHandler.h"
 #include "ship/controller/controldeck/ControlDeck.h"
+
+#ifdef __WIIU__
+#include "ship/controller/controldevice/controller/mapping/wiiu/WiiUButtonToButtonMapping.h"
+#include "ship/controller/controldevice/controller/mapping/wiiu/WiiUAxisDirectionToButtonMapping.h"
+#endif
 
 namespace Ship {
 std::shared_ptr<ControllerButtonMapping> ButtonMappingFactory::CreateButtonMappingFromConfig(uint8_t portIndex,
@@ -26,6 +33,42 @@ std::shared_ptr<ControllerButtonMapping> ButtonMappingFactory::CreateButtonMappi
         return nullptr;
     }
 
+#ifdef __WIIU__
+    if (mappingClass == "WiiUButtonToButtonMapping") {
+        int32_t deviceIndex = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.WiiUDeviceIndex", mappingCvarKey.c_str()).c_str(), WIIU_DEVICE_GAMEPAD);
+        int32_t wiiuButton = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.WiiUButton", mappingCvarKey.c_str()).c_str(), 0);
+
+        if (wiiuButton == 0) {
+            Ship::Context::GetRawInstance()->GetConsoleVariables()->ClearVariable(mappingCvarKey.c_str());
+            Ship::Context::GetRawInstance()->GetConsoleVariables()->Save();
+            return nullptr;
+        }
+
+        return std::make_shared<WiiUButtonToButtonMapping>(portIndex, bitmask, deviceIndex,
+                                                           static_cast<uint32_t>(wiiuButton));
+    }
+
+    if (mappingClass == "WiiUAxisDirectionToButtonMapping") {
+        int32_t deviceIndex = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.WiiUDeviceIndex", mappingCvarKey.c_str()).c_str(), WIIU_DEVICE_GAMEPAD);
+        int32_t wiiuAxis = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.WiiUAxis", mappingCvarKey.c_str()).c_str(), -1);
+        int32_t axisDirection = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.AxisDirection", mappingCvarKey.c_str()).c_str(), 0);
+
+        if (wiiuAxis < 0 || wiiuAxis >= WiiU::WIIU_AXIS_COUNT ||
+            (axisDirection != NEGATIVE && axisDirection != POSITIVE)) {
+            Ship::Context::GetRawInstance()->GetConsoleVariables()->ClearVariable(mappingCvarKey.c_str());
+            Ship::Context::GetRawInstance()->GetConsoleVariables()->Save();
+            return nullptr;
+        }
+
+        return std::make_shared<WiiUAxisDirectionToButtonMapping>(portIndex, bitmask, deviceIndex, wiiuAxis,
+                                                                  axisDirection);
+    }
+#else
     if (mappingClass == "SDLButtonToButtonMapping") {
         int32_t sdlControllerButton = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
             StringHelper::Sprintf("%s.SDLControllerButton", mappingCvarKey.c_str()).c_str(), -1);
@@ -55,6 +98,7 @@ std::shared_ptr<ControllerButtonMapping> ButtonMappingFactory::CreateButtonMappi
 
         return std::make_shared<SDLAxisDirectionToButtonMapping>(portIndex, bitmask, sdlControllerAxis, axisDirection);
     }
+#endif
 
     if (mappingClass == "KeyboardKeyToButtonMapping") {
         int32_t scancode = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
@@ -101,6 +145,23 @@ std::vector<std::shared_ptr<ControllerButtonMapping>>
 ButtonMappingFactory::CreateDefaultSDLButtonMappings(uint8_t portIndex, CONTROLLERBUTTONS_T bitmask) {
     std::vector<std::shared_ptr<ControllerButtonMapping>> mappings;
 
+#ifdef __WIIU__
+    auto defaultMappings = Context::GetRawInstance()->GetControlDeck()->GetControllerDefaultMappings();
+    auto defaultWiiUButtonsForBitmask = defaultMappings->GetDefaultWiiUButtonToButtonMappings()[bitmask];
+    auto defaultWiiUAxisDirectionsForBitmask = defaultMappings->GetDefaultWiiUAxisDirectionToButtonMappings()[bitmask];
+
+    for (const auto& deviceIndex : WiiUDefaultDevicesForPort(portIndex)) {
+        for (const auto& wiiuButton : defaultWiiUButtonsForBitmask) {
+            mappings.push_back(
+                std::make_shared<WiiUButtonToButtonMapping>(portIndex, bitmask, deviceIndex, wiiuButton));
+        }
+
+        for (const auto& [wiiuAxis, axisDirection] : defaultWiiUAxisDirectionsForBitmask) {
+            mappings.push_back(std::make_shared<WiiUAxisDirectionToButtonMapping>(portIndex, bitmask, deviceIndex,
+                                                                                  wiiuAxis, axisDirection));
+        }
+    }
+#else
     auto defaultButtonsForBitmask = Context::GetRawInstance()
                                         ->GetControlDeck()
                                         ->GetControllerDefaultMappings()
@@ -119,6 +180,7 @@ ButtonMappingFactory::CreateDefaultSDLButtonMappings(uint8_t portIndex, CONTROLL
         mappings.push_back(
             std::make_shared<SDLAxisDirectionToButtonMapping>(portIndex, bitmask, sdlGamepadAxis, axisDirection));
     }
+#endif
 
     return mappings;
 }
@@ -127,6 +189,39 @@ std::shared_ptr<ControllerButtonMapping>
 ButtonMappingFactory::CreateButtonMappingFromSDLInput(uint8_t portIndex, CONTROLLERBUTTONS_T bitmask) {
     std::shared_ptr<ControllerButtonMapping> mapping = nullptr;
 
+#ifdef __WIIU__
+    for (const auto& deviceIndex : WiiU::GetConnectedDeviceIndices()) {
+        const uint32_t held = WiiU::GetButtonsHeld(deviceIndex);
+        if (held != 0) {
+            // Take the lowest held bit so a single press yields a single mapping.
+            const uint32_t button = held & (~held + 1);
+            mapping = std::make_shared<WiiUButtonToButtonMapping>(portIndex, bitmask, deviceIndex, button);
+            break;
+        }
+
+        for (int32_t axis = 0; axis < WiiU::WIIU_AXIS_COUNT; axis++) {
+            const float axisValue = WiiU::GetAxisValue(deviceIndex, axis);
+            int32_t axisDirection = 0;
+            if (axisValue < -0.7f) {
+                axisDirection = NEGATIVE;
+            } else if (axisValue > 0.7f) {
+                axisDirection = POSITIVE;
+            }
+
+            if (axisDirection == 0) {
+                continue;
+            }
+
+            mapping = std::make_shared<WiiUAxisDirectionToButtonMapping>(portIndex, bitmask, deviceIndex, axis,
+                                                                         axisDirection);
+            break;
+        }
+
+        if (mapping != nullptr) {
+            break;
+        }
+    }
+#else
     for (auto [instanceId, gamepad] : Context::GetRawInstance()
                                           ->GetControlDeck()
                                           ->GetConnectedPhysicalDeviceManager()
@@ -160,6 +255,7 @@ ButtonMappingFactory::CreateButtonMappingFromSDLInput(uint8_t portIndex, CONTROL
             break;
         }
     }
+#endif
 
     return mapping;
 }

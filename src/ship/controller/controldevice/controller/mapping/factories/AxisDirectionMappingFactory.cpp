@@ -3,8 +3,13 @@
 #include "ship/controller/controldevice/controller/mapping/mouse/MouseButtonToAxisDirectionMapping.h"
 #include "ship/controller/controldevice/controller/mapping/mouse/MouseWheelToAxisDirectionMapping.h"
 
+#ifndef __WIIU__
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLButtonToAxisDirectionMapping.h"
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLAxisDirectionToAxisDirectionMapping.h"
+#else
+#include "ship/controller/controldevice/controller/mapping/wiiu/WiiUButtonToAxisDirectionMapping.h"
+#include "ship/controller/controldevice/controller/mapping/wiiu/WiiUAxisDirectionToAxisDirectionMapping.h"
+#endif
 
 #include "ship/config/ConsoleVariable.h"
 #include "ship/utils/StringHelper.h"
@@ -23,6 +28,46 @@ AxisDirectionMappingFactory::CreateAxisDirectionMappingFromConfig(uint8_t portIn
     const std::string mappingClass = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetString(
         StringHelper::Sprintf("%s.AxisDirectionMappingClass", mappingCvarKey.c_str()).c_str(), "");
 
+#ifdef __WIIU__
+    if (mappingClass == "WiiUAxisDirectionToAxisDirectionMapping") {
+        int32_t direction = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.Direction", mappingCvarKey.c_str()).c_str(), -1);
+        int32_t deviceIndex = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.WiiUDeviceIndex", mappingCvarKey.c_str()).c_str(), WIIU_DEVICE_GAMEPAD);
+        int32_t wiiuAxis = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.WiiUAxis", mappingCvarKey.c_str()).c_str(), -1);
+        int32_t axisDirection = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.AxisDirection", mappingCvarKey.c_str()).c_str(), 0);
+
+        if ((direction != LEFT && direction != RIGHT && direction != UP && direction != DOWN) || wiiuAxis < 0 ||
+            wiiuAxis >= WiiU::WIIU_AXIS_COUNT || (axisDirection != NEGATIVE && axisDirection != POSITIVE)) {
+            Ship::Context::GetRawInstance()->GetConsoleVariables()->ClearVariable(mappingCvarKey.c_str());
+            Ship::Context::GetRawInstance()->GetConsoleVariables()->Save();
+            return nullptr;
+        }
+
+        return std::make_shared<WiiUAxisDirectionToAxisDirectionMapping>(
+            portIndex, stickIndex, static_cast<Direction>(direction), deviceIndex, wiiuAxis, axisDirection);
+    }
+
+    if (mappingClass == "WiiUButtonToAxisDirectionMapping") {
+        int32_t direction = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.Direction", mappingCvarKey.c_str()).c_str(), -1);
+        int32_t deviceIndex = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.WiiUDeviceIndex", mappingCvarKey.c_str()).c_str(), WIIU_DEVICE_GAMEPAD);
+        int32_t wiiuButton = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.WiiUButton", mappingCvarKey.c_str()).c_str(), 0);
+
+        if ((direction != LEFT && direction != RIGHT && direction != UP && direction != DOWN) || wiiuButton == 0) {
+            Ship::Context::GetRawInstance()->GetConsoleVariables()->ClearVariable(mappingCvarKey.c_str());
+            Ship::Context::GetRawInstance()->GetConsoleVariables()->Save();
+            return nullptr;
+        }
+
+        return std::make_shared<WiiUButtonToAxisDirectionMapping>(
+            portIndex, stickIndex, static_cast<Direction>(direction), deviceIndex, static_cast<uint32_t>(wiiuButton));
+    }
+#else
     if (mappingClass == "SDLAxisDirectionToAxisDirectionMapping") {
         int32_t direction = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
             StringHelper::Sprintf("%s.Direction", mappingCvarKey.c_str()).c_str(), -1);
@@ -60,6 +105,8 @@ AxisDirectionMappingFactory::CreateAxisDirectionMappingFromConfig(uint8_t portIn
         return std::make_shared<SDLButtonToAxisDirectionMapping>(
             portIndex, stickIndex, static_cast<Direction>(direction), sdlControllerButton);
     }
+
+#endif
 
     if (mappingClass == "KeyboardKeyToAxisDirectionMapping") {
         int32_t direction = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
@@ -136,6 +183,20 @@ std::vector<std::shared_ptr<ControllerAxisDirectionMapping>>
 AxisDirectionMappingFactory::CreateDefaultSDLAxisDirectionMappings(uint8_t portIndex, StickIndex stickIndex) {
     std::vector<std::shared_ptr<ControllerAxisDirectionMapping>> mappings;
 
+#ifdef __WIIU__
+    auto defaultWiiUAxisDirectionsForStick = Context::GetRawInstance()
+                                                 ->GetControlDeck()
+                                                 ->GetControllerDefaultMappings()
+                                                 ->GetDefaultWiiUAxisDirectionToAxisDirectionMappings()[stickIndex];
+
+    for (const auto& deviceIndex : WiiUDefaultDevicesForPort(portIndex)) {
+        for (const auto& [direction, wiiuAxisDirection] : defaultWiiUAxisDirectionsForStick) {
+            auto [wiiuAxis, wiiuDirection] = wiiuAxisDirection;
+            mappings.push_back(std::make_shared<WiiUAxisDirectionToAxisDirectionMapping>(
+                portIndex, stickIndex, direction, deviceIndex, wiiuAxis, wiiuDirection));
+        }
+    }
+#else
     auto defaultButtonsForStick = Context::GetRawInstance()
                                       ->GetControlDeck()
                                       ->GetControllerDefaultMappings()
@@ -156,6 +217,7 @@ AxisDirectionMappingFactory::CreateDefaultSDLAxisDirectionMappings(uint8_t portI
         mappings.push_back(std::make_shared<SDLAxisDirectionToAxisDirectionMapping>(
             portIndex, stickIndex, direction, sdlGamepadAxis, sdlGamepadDirection));
     }
+#endif
 
     return mappings;
 }
@@ -165,6 +227,40 @@ AxisDirectionMappingFactory::CreateAxisDirectionMappingFromSDLInput(uint8_t port
                                                                     Direction direction) {
     std::shared_ptr<ControllerAxisDirectionMapping> mapping = nullptr;
 
+#ifdef __WIIU__
+    for (const auto& deviceIndex : WiiU::GetConnectedDeviceIndices()) {
+        const uint32_t held = WiiU::GetButtonsHeld(deviceIndex);
+        if (held != 0) {
+            // Take the lowest held bit so a single press yields a single mapping.
+            const uint32_t button = held & (~held + 1);
+            mapping = std::make_shared<WiiUButtonToAxisDirectionMapping>(portIndex, stickIndex, direction, deviceIndex,
+                                                                         button);
+            break;
+        }
+
+        for (int32_t axis = 0; axis < WiiU::WIIU_AXIS_COUNT; axis++) {
+            const float axisValue = WiiU::GetAxisValue(deviceIndex, axis);
+            int32_t axisDirection = 0;
+            if (axisValue < -0.7f) {
+                axisDirection = NEGATIVE;
+            } else if (axisValue > 0.7f) {
+                axisDirection = POSITIVE;
+            }
+
+            if (axisDirection == 0) {
+                continue;
+            }
+
+            mapping = std::make_shared<WiiUAxisDirectionToAxisDirectionMapping>(portIndex, stickIndex, direction,
+                                                                                deviceIndex, axis, axisDirection);
+            break;
+        }
+
+        if (mapping != nullptr) {
+            break;
+        }
+    }
+#else
     for (auto [instanceId, gamepad] : Context::GetRawInstance()
                                           ->GetControlDeck()
                                           ->GetConnectedPhysicalDeviceManager()
@@ -199,6 +295,7 @@ AxisDirectionMappingFactory::CreateAxisDirectionMappingFromSDLInput(uint8_t port
             break;
         }
     }
+#endif
 
     return mapping;
 }

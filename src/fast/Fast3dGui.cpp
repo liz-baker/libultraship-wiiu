@@ -15,7 +15,7 @@
 #include <SDL_video.h>
 #include <imgui_impl_metal.h>
 #include <imgui_impl_sdl2.h>
-#else
+#elif !defined(__WIIU__)
 #include <SDL2/SDL_hints.h>
 #include <SDL2/SDL_video.h>
 #endif
@@ -35,6 +35,12 @@
 
 // NOLINTNEXTLINE
 IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+#endif
+
+#ifdef __WIIU__
+#include "ship/port/wiiu/ImGui/imgui_impl_wiiu.h"
+#include "ship/port/wiiu/ImGui/imgui_impl_gx2.h"
+#include "fast/backends/gfx_wiiu.h"
 #endif
 
 namespace Fast {
@@ -69,7 +75,9 @@ void Fast3dGui::HandleWindowEvents(Fast::WindowEvent event) {
     switch (mImpl.Backend) {
         case WindowBackend::FAST3D_SDL_OPENGL:
         case WindowBackend::FAST3D_SDL_METAL:
+#ifndef __WIIU__
             ImGui_ImplSDL2_ProcessEvent(static_cast<const SDL_Event*>(event.Sdl.Event));
+#endif
 #if defined(__ANDROID__) || defined(__IOS__)
             Ship::Mobile::ImGuiProcessEvent(ImGui::GetIO().WantTextInput);
 #endif
@@ -80,6 +88,11 @@ void Fast3dGui::HandleWindowEvents(Fast::WindowEvent event) {
                                            event.Win32.Param2);
             break;
 #endif
+#ifdef __WIIU__
+        case WindowBackend::FAST3D_GX2:
+            ImGui_ImplWiiU_ProcessInput(static_cast<const ImGui_ImplWiiU_ControllerInput*>(event.Gx2.Input));
+            break;
+#endif
         default:
             break;
     }
@@ -87,6 +100,7 @@ void Fast3dGui::HandleWindowEvents(Fast::WindowEvent event) {
 
 void Fast3dGui::ImGuiWMInit() {
     switch (mImpl.Backend) {
+#ifdef ENABLE_OPENGL
         case WindowBackend::FAST3D_SDL_OPENGL:
             SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
             if (Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(CVAR_ALLOW_BACKGROUND_INPUTS, 1)) {
@@ -94,6 +108,7 @@ void Fast3dGui::ImGuiWMInit() {
             }
             ImGui_ImplSDL2_InitForOpenGL(static_cast<SDL_Window*>(mImpl.Opengl.Window), mImpl.Opengl.Context);
             break;
+#endif
 #if __APPLE__
         case WindowBackend::FAST3D_SDL_METAL:
             SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
@@ -106,6 +121,11 @@ void Fast3dGui::ImGuiWMInit() {
 #if defined(ENABLE_DX11) || defined(ENABLE_DX12)
         case WindowBackend::FAST3D_DXGI_DX11:
             ImGui_ImplWin32_Init(mImpl.Dx11.Window);
+            break;
+#endif
+#ifdef __WIIU__
+        case WindowBackend::FAST3D_GX2:
+            ImGui_ImplWiiU_Init();
             break;
 #endif
         default:
@@ -131,6 +151,11 @@ void Fast3dGui::ImGuiWMShutdown() {
 #if defined(ENABLE_DX11) || defined(ENABLE_DX12)
         case WindowBackend::FAST3D_DXGI_DX11:
             ImGui_ImplWin32_Shutdown();
+            break;
+#endif
+#ifdef __WIIU__
+        case WindowBackend::FAST3D_GX2:
+            ImGui_ImplWiiU_Shutdown();
             break;
 #endif
         default:
@@ -168,6 +193,11 @@ void Fast3dGui::ImGuiBackendInit() {
                                 static_cast<ID3D11DeviceContext*>(mImpl.Dx11.DeviceContext));
             break;
 #endif
+#ifdef __WIIU__
+        case WindowBackend::FAST3D_GX2:
+            ImGui_ImplGX2_Init();
+            break;
+#endif
         default:
             break;
     }
@@ -188,6 +218,11 @@ void Fast3dGui::ImGuiBackendShutdown() {
 #if defined(ENABLE_DX11) || defined(ENABLE_DX12)
         case WindowBackend::FAST3D_DXGI_DX11:
             ImGui_ImplDX11_Shutdown();
+            break;
+#endif
+#ifdef __WIIU__
+        case WindowBackend::FAST3D_GX2:
+            ImGui_ImplGX2_Shutdown();
             break;
 #endif
         default:
@@ -216,6 +251,11 @@ void Fast3dGui::ImGuiBackendNewFrame() {
             break;
         }
 #endif
+#ifdef __WIIU__
+        case WindowBackend::FAST3D_GX2:
+            ImGui_ImplGX2_NewFrame();
+            break;
+#endif
         default:
             break;
     }
@@ -223,14 +263,29 @@ void Fast3dGui::ImGuiBackendNewFrame() {
 
 void Fast3dGui::ImGuiWMNewFrame() {
     switch (mImpl.Backend) {
+#ifndef __WIIU__
         case WindowBackend::FAST3D_SDL_OPENGL:
         case WindowBackend::FAST3D_SDL_METAL:
             ImGui_ImplSDL2_NewFrame();
             break;
+#endif
 #ifdef ENABLE_DX11
         case WindowBackend::FAST3D_DXGI_DX11:
             ImGui_ImplWin32_NewFrame();
             break;
+#endif
+#ifdef __WIIU__
+        case WindowBackend::FAST3D_GX2: {
+            // The Wii U platform backend has no dedicated NewFrame; feed ImGui the
+            // frame delta measured by the window backend (microseconds, min 1), and the
+            // framebuffer size the way the SDL/Win32 backends' NewFrame() do - ImGui's
+            // DisplaySize defaults to (-1, -1), which fails the sanity check in
+            // ImGui::NewFrame() on the very first frame.
+            ImGuiIO& io = ImGui::GetIO();
+            io.DeltaTime = frametime / 1000000.0f;
+            io.DisplaySize = ImVec2(static_cast<float>(mImpl.Gx2.Width), static_cast<float>(mImpl.Gx2.Height));
+            break;
+        }
 #endif
         default:
             break;
@@ -240,11 +295,13 @@ void Fast3dGui::ImGuiWMNewFrame() {
 // Bind ImGui's SDL2 gamepad backend to the controller(s) the
 // ControlDeck has already opened
 void Fast3dGui::RefreshImGuiGamepads() {
+#ifndef __WIIU__
     if (mImpl.Backend != WindowBackend::FAST3D_SDL_OPENGL && mImpl.Backend != WindowBackend::FAST3D_SDL_METAL) {
         return;
     }
 
     ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode_AutoAll, nullptr, 0);
+#endif
 }
 
 void Fast3dGui::ImGuiRenderDrawData(ImDrawData* data) {
@@ -268,6 +325,11 @@ void Fast3dGui::ImGuiRenderDrawData(ImDrawData* data) {
             ImGui_ImplDX11_RenderDrawData(data);
             break;
 #endif
+#ifdef __WIIU__
+        case WindowBackend::FAST3D_GX2:
+            ImGui_ImplGX2_RenderDrawData(data);
+            break;
+#endif
         default:
             break;
     }
@@ -278,6 +340,7 @@ void Fast3dGui::DrawFloatingWindows() {
         return;
     }
 
+#ifndef __WIIU__
     // OpenGL requires extra platform handling for the GL context
     if (mImpl.Backend == WindowBackend::FAST3D_SDL_OPENGL && mImpl.Opengl.Context != nullptr) {
         // Backup window and context before calling RenderPlatformWindowsDefault
@@ -289,7 +352,9 @@ void Fast3dGui::DrawFloatingWindows() {
 
         // Restore GL context for next frame
         SDL_GL_MakeCurrent(backupCurrentWindow, backupCurrentContext);
-    } else {
+    } else
+#endif
+    {
 #ifdef __APPLE__
         // Metal requires additional frame setup to get ImGui ready for drawing floating windows
         if (mImpl.Backend == WindowBackend::FAST3D_SDL_METAL) {

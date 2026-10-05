@@ -30,7 +30,11 @@
 #if defined(_WIN32)
 #include "ship/audio/WasapiAudioPlayer.h"
 #endif
+#ifndef __WIIU__
 #include "ship/audio/SDLAudioPlayer.h"
+#else
+#include "ship/audio/WiiUAudioPlayer.h"
+#endif
 #ifdef __APPLE__
 #include "ship/utils/AppleFolderManager.h"
 #endif

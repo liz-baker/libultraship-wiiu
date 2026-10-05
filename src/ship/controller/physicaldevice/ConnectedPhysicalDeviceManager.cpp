@@ -52,6 +52,7 @@ void ConnectedPhysicalDeviceManager::HandlePhysicalDeviceDisconnect(int32_t sdlJ
 void ConnectedPhysicalDeviceManager::RefreshConnectedSDLGamepads() {
     mConnectedSDLGamepads.clear();
     mConnectedSDLGamepadNames.clear();
+#ifndef __WIIU__
     static SDL_JoystickGUID sZeroGuid;
 
     for (int32_t i = 0; i < SDL_NumJoysticks(); i++) {
@@ -104,5 +105,6 @@ void ConnectedPhysicalDeviceManager::RefreshConnectedSDLGamepads() {
             mIgnoredInstanceIds[port].insert(instanceId);
         }
     }
+#endif
 }
 } // namespace Ship

@@ -70,6 +70,14 @@ target_include_directories(libultraship
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${INCLUDE_DIR} ${ADDITIONAL_LIB_INCLUDES}
 )
 
+if (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    target_include_directories(libultraship PRIVATE
+        ${DEVKITPRO}/portlibs/wiiu/include/
+        ${DEVKITPRO}/portlibs/ppc/include/
+        ${DEVKITPRO}/wut/include/
+    )
+endif()
+
 #=================== Linking ===================
 if(INCLUDE_MPQ_SUPPORT)
     if (NOT CMAKE_SYSTEM_NAME STREQUAL "Windows" AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -201,6 +209,14 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
             XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
         )
     endif()
+elseif (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    # Wii U (Cafe) has no desktop OpenGL — it renders through GX2 — and SDL is
+    # not used for the platform, so ENABLE_OPENGL is intentionally omitted.
+    target_compile_definitions(libultraship PRIVATE
+        $<$<CONFIG:Debug>:_DEBUG>
+        $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+        SPDLOG_ACTIVE_LEVEL=${SPDLOG_MIN_CUTOFF}
+    )
 else()
     target_compile_definitions(libultraship PRIVATE
         ENABLE_OPENGL

@@ -1,5 +1,7 @@
 #include "ship/controller/controldevice/controller/mapping/factories/GyroMappingFactory.h"
+#ifndef __WIIU__
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLGyroMapping.h"
+#endif
 #include "ship/config/ConsoleVariable.h"
 #include "ship/utils/StringHelper.h"
 #include "ship/Context.h"
@@ -21,6 +23,7 @@ std::shared_ptr<ControllerGyroMapping> GyroMappingFactory::CreateGyroMappingFrom
         return nullptr;
     }
 
+#ifndef __WIIU__
     if (mappingClass == "SDLGyroMapping") {
         float neutralPitch = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetFloat(
             StringHelper::Sprintf("%s.NeutralPitch", mappingCvarKey.c_str()).c_str(), 0.0f);
@@ -31,6 +34,7 @@ std::shared_ptr<ControllerGyroMapping> GyroMappingFactory::CreateGyroMappingFrom
 
         return std::make_shared<SDLGyroMapping>(portIndex, sensitivity, neutralPitch, neutralYaw, neutralRoll);
     }
+#endif
 
     return nullptr;
 }
@@ -38,6 +42,7 @@ std::shared_ptr<ControllerGyroMapping> GyroMappingFactory::CreateGyroMappingFrom
 std::shared_ptr<ControllerGyroMapping> GyroMappingFactory::CreateGyroMappingFromSDLInput(uint8_t portIndex) {
     std::shared_ptr<ControllerGyroMapping> mapping = nullptr;
 
+#ifndef __WIIU__
     for (auto [instanceId, gamepad] : Context::GetRawInstance()
                                           ->GetControlDeck()
                                           ->GetConnectedPhysicalDeviceManager()
@@ -77,6 +82,7 @@ std::shared_ptr<ControllerGyroMapping> GyroMappingFactory::CreateGyroMappingFrom
             break;
         }
     }
+#endif
 
     return mapping;
 }

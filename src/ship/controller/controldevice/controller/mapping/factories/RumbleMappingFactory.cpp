@@ -1,5 +1,9 @@
 #include "ship/controller/controldevice/controller/mapping/factories/RumbleMappingFactory.h"
+#ifndef __WIIU__
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLRumbleMapping.h"
+#else
+#include "ship/controller/controldevice/controller/mapping/wiiu/WiiURumbleMapping.h"
+#endif
 #include "ship/config/ConsoleVariable.h"
 #include "ship/utils/StringHelper.h"
 #include "ship/Context.h"
@@ -25,18 +29,36 @@ std::shared_ptr<ControllerRumbleMapping> RumbleMappingFactory::CreateRumbleMappi
         return nullptr;
     }
 
+#ifdef __WIIU__
+    if (mappingClass == "WiiURumbleMapping") {
+        int32_t deviceIndex = Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.WiiUDeviceIndex", mappingCvarKey.c_str()).c_str(), WIIU_DEVICE_GAMEPAD);
+
+        return std::make_shared<WiiURumbleMapping>(portIndex, deviceIndex, lowFrequencyIntensityPercentage,
+                                                   highFrequencyIntensityPercentage);
+    }
+#else
     if (mappingClass == "SDLRumbleMapping") {
         return std::make_shared<SDLRumbleMapping>(portIndex, lowFrequencyIntensityPercentage,
                                                   highFrequencyIntensityPercentage);
     }
+#endif
 
     return nullptr;
 }
 
 std::vector<std::shared_ptr<ControllerRumbleMapping>>
 RumbleMappingFactory::CreateDefaultSDLRumbleMappings(PhysicalDeviceType physicalDeviceType, uint8_t portIndex) {
-    std::vector<std::shared_ptr<ControllerRumbleMapping>> mappings = { std::make_shared<SDLRumbleMapping>(
-        portIndex, DEFAULT_LOW_FREQUENCY_RUMBLE_PERCENTAGE, DEFAULT_HIGH_FREQUENCY_RUMBLE_PERCENTAGE) };
+    std::vector<std::shared_ptr<ControllerRumbleMapping>> mappings;
+#ifndef __WIIU__
+    mappings.push_back(std::make_shared<SDLRumbleMapping>(portIndex, DEFAULT_LOW_FREQUENCY_RUMBLE_PERCENTAGE,
+                                                          DEFAULT_HIGH_FREQUENCY_RUMBLE_PERCENTAGE));
+#else
+    for (const auto& deviceIndex : WiiUDefaultDevicesForPort(portIndex)) {
+        mappings.push_back(std::make_shared<WiiURumbleMapping>(
+            portIndex, deviceIndex, DEFAULT_LOW_FREQUENCY_RUMBLE_PERCENTAGE, DEFAULT_HIGH_FREQUENCY_RUMBLE_PERCENTAGE));
+    }
+#endif
 
     return mappings;
 }
@@ -44,6 +66,17 @@ RumbleMappingFactory::CreateDefaultSDLRumbleMappings(PhysicalDeviceType physical
 std::shared_ptr<ControllerRumbleMapping> RumbleMappingFactory::CreateRumbleMappingFromSDLInput(uint8_t portIndex) {
     std::shared_ptr<ControllerRumbleMapping> mapping = nullptr;
 
+#ifdef __WIIU__
+    for (const auto& deviceIndex : WiiU::GetConnectedDeviceIndices()) {
+        if (!WiiU::DeviceSupportsRumble(deviceIndex) || WiiU::GetButtonsHeld(deviceIndex) == 0) {
+            continue;
+        }
+
+        mapping = std::make_shared<WiiURumbleMapping>(portIndex, deviceIndex, DEFAULT_LOW_FREQUENCY_RUMBLE_PERCENTAGE,
+                                                      DEFAULT_HIGH_FREQUENCY_RUMBLE_PERCENTAGE);
+        break;
+    }
+#else
     for (auto [instanceId, gamepad] : Context::GetRawInstance()
                                           ->GetControlDeck()
                                           ->GetConnectedPhysicalDeviceManager()
@@ -83,6 +116,7 @@ std::shared_ptr<ControllerRumbleMapping> RumbleMappingFactory::CreateRumbleMappi
             break;
         }
     }
+#endif
 
     return mapping;
 }

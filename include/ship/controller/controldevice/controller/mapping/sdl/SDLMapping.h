@@ -1,13 +1,11 @@
 #pragma once
 
+#ifndef __WIIU__
 #include <SDL2/SDL.h>
+#else
+typedef int SDL_GameControllerButton;
+typedef int SDL_GameControllerAxis;
+#endif
 
-namespace Ship {
-
-/** @brief Identifies a two-dimensional axis component. */
-enum Axis { X = 0, Y = 1 };
-
-/** @brief Identifies the sign of an axis value (negative or positive half). */
-enum AxisDirection { NEGATIVE = -1, POSITIVE = 1 };
-
-} // namespace Ship
+// Axis / AxisDirection are shared with the non-SDL mapping backends.
+#include "ship/controller/controldevice/controller/mapping/AxisDirection.h"

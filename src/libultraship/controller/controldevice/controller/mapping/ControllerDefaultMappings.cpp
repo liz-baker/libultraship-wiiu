@@ -71,6 +71,7 @@ void ControllerDefaultMappings::SetDefaultSDLButtonToButtonMappings(
         return;
     }
 
+#ifndef __WIIU__
     Ship::ControllerDefaultMappings::SetDefaultSDLButtonToButtonMappings({
         { BTN_A, { SDL_CONTROLLER_BUTTON_A } },
         { BTN_B, { SDL_CONTROLLER_BUTTON_B } },
@@ -81,6 +82,7 @@ void ControllerDefaultMappings::SetDefaultSDLButtonToButtonMappings(
         { BTN_DLEFT, { SDL_CONTROLLER_BUTTON_DPAD_LEFT } },
         { BTN_DRIGHT, { SDL_CONTROLLER_BUTTON_DPAD_RIGHT } },
     });
+#endif
 }
 
 void ControllerDefaultMappings::SetDefaultSDLAxisDirectionToButtonMappings(
@@ -92,6 +94,7 @@ void ControllerDefaultMappings::SetDefaultSDLAxisDirectionToButtonMappings(
         return;
     }
 
+#ifndef __WIIU__
     Ship::ControllerDefaultMappings::SetDefaultSDLAxisDirectionToButtonMappings({
         { BTN_R, { { SDL_CONTROLLER_AXIS_TRIGGERRIGHT, 1 } } },
         { BTN_Z, { { SDL_CONTROLLER_AXIS_TRIGGERLEFT, 1 } } },
@@ -100,5 +103,6 @@ void ControllerDefaultMappings::SetDefaultSDLAxisDirectionToButtonMappings(
         { BTN_CLEFT, { { SDL_CONTROLLER_AXIS_RIGHTX, -1 } } },
         { BTN_CRIGHT, { { SDL_CONTROLLER_AXIS_RIGHTX, 1 } } },
     });
+#endif
 }
 } // namespace LUS
