@@ -2,7 +2,13 @@
 
 #include "message.h"
 
+#ifdef __WIIU__
+// wut's <coreinit/time.h> declares OSTime as int64_t; a different underlying type would conflict
+// in any file that includes both (e.g. through the VPAD/KPAD headers).
+typedef s64 OSTime;
+#else
 typedef u64 OSTime;
+#endif
 
 typedef struct OSTimer {
     /* 0x00 */ struct OSTimer* next;
