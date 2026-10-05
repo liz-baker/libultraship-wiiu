@@ -364,6 +364,10 @@ bool Fast3dWindow::CanDisableVerticalSync() {
     return mWindowManagerApi->CanDisableVsync();
 }
 
+void Fast3dWindow::SetPresentOffsetY(int nativeLines) {
+    mInterpreter->SetPresentOffsetY(nativeLines);
+}
+
 void Fast3dWindow::SetResolutionMultiplier(float multiplier) {
     mInterpreter->SetResolutionMultiplier(multiplier);
 }

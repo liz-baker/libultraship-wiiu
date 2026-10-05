@@ -515,8 +515,23 @@ void Fast3dGui::DrawGame() {
     }
     uintptr_t fb = mWindow->GetGfxFrameBuffer();
     if (fb) {
-        ImGui::SetCursorPos(pos);
-        ImGui::Image(reinterpret_cast<ImTextureID>(fb), size);
+        const int offsetLines = mInterpreter.lock()->GetPresentOffsetY();
+        if (offsetLines != 0) {
+            // Shift the image within its own rect and black out what it uncovers (N64 VI vStart shake).
+            const float nativeHeight = mInterpreter.lock()->mNativeDimensions.height;
+            const float offsetPx = std::round(offsetLines * size.y / nativeHeight);
+            ImVec2 min = ImVec2(mainPos.x + pos.x, mainPos.y + pos.y);
+            ImVec2 max = ImVec2(min.x + size.x, min.y + size.y);
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            drawList->PushClipRect(min, max, true);
+            drawList->AddRectFilled(min, max, IM_COL32_BLACK);
+            drawList->AddImage(reinterpret_cast<ImTextureID>(fb), ImVec2(min.x, min.y + offsetPx),
+                               ImVec2(max.x, max.y + offsetPx));
+            drawList->PopClipRect();
+        } else {
+            ImGui::SetCursorPos(pos);
+            ImGui::Image(reinterpret_cast<ImTextureID>(fb), size);
+        }
     }
 
     ImGui::End();
