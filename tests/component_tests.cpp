@@ -1141,3 +1141,19 @@ TEST(ComponentToTreeStringTest, ChildIsIndented) {
     // Parent at depth 0, child at depth 1 (2-space indent).
     EXPECT_EQ(tree, "Parent\n  Child\n");
 }
+
+#if defined(NON_PORTABLE) && defined(__linux__)
+// Without an explicit appName, app-directory paths must resolve to the live Context's short name
+// (not "libultraship"), and revert to the library default once the Context is gone.
+TEST(ContextAppDirectoryTest, DefaultAppNameFollowsLiveContext) {
+    unsetenv("SHIP_HOME");
+    setenv("XDG_DATA_HOME", ::testing::TempDir().c_str(), 1);
+
+    {
+        auto context = Ship::Context::CreateInstance("TestApp", "testshort");
+        EXPECT_NE(Ship::Context::GetAppDirectoryPath().find("/testshort/"), std::string::npos);
+        EXPECT_NE(Ship::Context::GetAppDirectoryPath("explicit").find("/explicit/"), std::string::npos);
+    }
+    EXPECT_NE(Ship::Context::GetAppDirectoryPath().find("/libultraship/"), std::string::npos);
+}
+#endif

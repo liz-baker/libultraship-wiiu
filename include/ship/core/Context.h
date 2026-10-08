@@ -121,7 +121,8 @@ class Context : public Component {
     static std::string GetAppBundlePath();
     /**
      * @brief Returns the platform-specific directory where the application stores its data.
-     * @param appName Override the application name used to build the path; defaults to the current app name.
+     * @param appName Override the application name used to build the path. When empty, the short name of the
+     *                live Context is used, falling back to "libultraship" only if no Context exists.
      * @return Absolute path string.
      */
     static std::string GetAppDirectoryPath(const std::string& appName = "");
