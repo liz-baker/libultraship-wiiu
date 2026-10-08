@@ -5,6 +5,7 @@
 #include <iostream>
 #include <algorithm>
 #include <queue>
+#include <mutex>
 #if defined(__APPLE__)
 #include <pwd.h>
 #endif
@@ -34,6 +35,21 @@
 
 namespace Ship {
 namespace {
+// Short name of the live Context, used as the default app name when a caller doesn't pass one.
+// Several library components resolve paths without a name; this keeps them in the application's
+// directory rather than a library-named one.
+std::mutex sLiveContextMutex;
+const Context* sLiveContext = nullptr;
+std::string sLiveShortName;
+
+std::string ResolveAppName(const std::string& appName) {
+    if (!appName.empty()) {
+        return appName;
+    }
+    std::lock_guard<std::mutex> lock(sLiveContextMutex);
+    return sLiveShortName.empty() ? "libultraship" : sLiveShortName;
+}
+
 void UpdateBridgeCachesIfPresent(const std::shared_ptr<Context>& context) {
     if (!context) {
         return;
@@ -147,6 +163,13 @@ Context::~Context() {
     // Finally drop the Logger, which shuts spdlog down, after everything else is gone.
     logger.reset();
     // spdlog shutdown is now owned by the Logger component which was destroyed above.
+
+    // Cleared last: teardown above may still resolve app-directory paths.
+    std::lock_guard<std::mutex> lock(sLiveContextMutex);
+    if (sLiveContext == this) {
+        sLiveContext = nullptr;
+        sLiveShortName.clear();
+    }
 }
 
 std::shared_ptr<Context> Context::CreateDefaultInstance(const std::string& name, const std::string& shortName,
@@ -304,6 +327,11 @@ std::shared_ptr<Context> Context::CreateInstance(const std::string& name, const 
 
 Context::Context(std::string name, std::string shortName)
     : Component(std::move(name)), mShortName(std::move(shortName)), mInitTime(std::chrono::steady_clock::now()) {
+    {
+        std::lock_guard<std::mutex> lock(sLiveContextMutex);
+        sLiveContext = this;
+        sLiveShortName = mShortName;
+    }
 #ifdef __WIIU__
     Ship::WiiU::Init(mShortName);
 #endif
@@ -378,7 +406,7 @@ std::string Context::GetAppBundlePath() {
 
 std::string Context::GetAppDirectoryPath(const std::string& appName) {
 #if defined(__WIIU__)
-    return WiiUAppDirectoryPath(appName.empty() ? "libultraship" : appName);
+    return WiiUAppDirectoryPath(ResolveAppName(appName));
 #endif
 
 #if defined(__ANDROID__)
@@ -416,7 +444,7 @@ std::string Context::GetAppDirectoryPath(const std::string& appName) {
 #endif
 
 #ifdef NON_PORTABLE
-    const std::string effectiveAppName = appName.empty() ? "libultraship" : appName;
+    const std::string effectiveAppName = ResolveAppName(appName);
     char* prefpath = SDL_GetPrefPath(NULL, effectiveAppName.c_str());
     if (prefpath != NULL) {
         std::string ret(prefpath);
