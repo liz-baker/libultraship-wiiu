@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 // Encode with the F3DEX2 GBI, which is the interpreter's default ucode.
@@ -418,6 +419,111 @@ TEST_F(FourBitChainDrawTest, EachTileReadsItsOwnRows) {
     ASSERT_EQ(h.rapi.uploads.size(), 2u);
     ExpectIntensity(h.rapi.uploads[0], levels[0].width, 1);
     ExpectIntensity(h.rapi.uploads[1], levels[1].width, 2);
+}
+
+// A paletted 8-bit chain whose base level is 33 texels wide, so its rows are padded to 40 bytes: the
+// uploaded base level is the same image as the same texels loaded with compact rows.
+class Ci8ChainDrawTest : public testing::Test {
+  protected:
+    static constexpr uint32_t kSize = 33;
+    static constexpr uint32_t kPaddedRow = 40;
+    static constexpr uint32_t kLevel1Size = 17;
+    static constexpr uint32_t kLevel1Row = 24;
+    static constexpr uint32_t kLevel1Tmem = kPaddedRow / 8 * kSize;
+
+    static uint8_t Texel(uint32_t x, uint32_t y) {
+        return (uint8_t)(x * 3 + y * 5);
+    }
+
+    void SetUp() override {
+        for (uint32_t i = 0; i < 256; i++) {
+            const uint16_t color = (uint16_t)(((i & 31) << 11) | (((i * 7) & 31) << 6) | (((i * 3) & 31) << 1) | 1);
+            palette[i * 2] = color >> 8;
+            palette[i * 2 + 1] = color & 0xFF;
+        }
+        compact.resize(kSize * kSize);
+        chain.assign(kPaddedRow * kSize + kLevel1Row * kLevel1Size, 0);
+        for (uint32_t y = 0; y < kSize; y++) {
+            for (uint32_t x = 0; x < kSize; x++) {
+                compact[y * kSize + x] = Texel(x, y);
+                chain[y * kPaddedRow + x] = Texel(x, y);
+            }
+        }
+        for (uint32_t i = 0; i < kLevel1Row * kLevel1Size; i++) {
+            chain[kPaddedRow * kSize + i] = 0xAA;
+        }
+        for (int i = 0; i < 3; i++) {
+            vtx[i].v.cn[3] = 255;
+        }
+        vtx[1].v.ob[0] = 1;
+        vtx[2].v.ob[1] = 1;
+    }
+
+    std::vector<Gfx> Draw(std::vector<Gfx> load) {
+        std::vector<Gfx> dl = {
+            gsSPMatrix(&identity, G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH),
+            gsSPMatrix(&identity, G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH),
+            gsSPClearGeometryMode(G_CULL_BOTH | G_LIGHTING | G_FOG),
+            gsDPSetCycleType(G_CYC_1CYCLE),
+            gsDPSetTextureLUT(G_TT_RGBA16),
+            gsDPSetCombineMode(G_CC_DECALRGB, G_CC_DECALRGB),
+            gsSPTexture(0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON),
+            gsDPLoadTLUT_pal256(palette.data()),
+        };
+        dl.insert(dl.end(), load.begin(), load.end());
+        dl.push_back(gsDPSetTile(G_IM_FMT_CI, G_IM_SIZ_8b, kPaddedRow / 8, 0, 0, 0, G_TX_CLAMP, 6, 0, G_TX_CLAMP, 6, 0));
+        dl.push_back(gsDPSetTileSize(0, 0, 0, (kSize - 1) << G_TEXTURE_IMAGE_FRAC, (kSize - 1) << G_TEXTURE_IMAGE_FRAC));
+        dl.push_back(gsSPVertex(vtx, 3, 0));
+        dl.push_back(gsSP1Triangle(0, 1, 2, 0));
+        dl.push_back(gsSPEndDisplayList());
+        return dl;
+    }
+
+    // Runs `dl` on a fresh interpreter: only one can be alive at a time.
+    static std::vector<NullGfxRenderingAPI::Upload> Uploads(std::vector<Gfx> dl) {
+        auto harness = std::make_unique<NullBackendInterpreter>();
+        harness->Run(dl.data());
+        return harness->rapi.uploads;
+    }
+
+    FixedMtx identity = IdentityMtx();
+    Vtx vtx[3] = {};
+    std::array<uint8_t, 512> palette{};
+    std::vector<uint8_t> compact;
+    std::vector<uint8_t> chain;
+};
+
+TEST_F(Ci8ChainDrawTest, PaddedBaseLevelUploadsLikeCompactRows) {
+    // The image as the game loads a single level: compact rows.
+    std::vector<Gfx> compactLoad = {
+        gsDPSetTextureImage(G_IM_FMT_CI, G_IM_SIZ_8b, kSize, compact.data()),
+        gsDPSetTile(G_IM_FMT_CI, G_IM_SIZ_8b, 0, 0, G_TX_LOADTILE, 0, 0, 0, 0, 0, 0, 0),
+        gsDPLoadSync(),
+        gsDPLoadBlock(G_TX_LOADTILE, 0, 0, kSize * kSize - 1, 410),
+        gsDPPipeSync(),
+    };
+    const auto reference = Uploads(Draw(compactLoad));
+    ASSERT_EQ(reference.size(), 1u);
+
+    // The same texels as a chain: one block, loaded as 16-bit texels with no dxt, the base level's
+    // padded row as the image width and a second level after it.
+    std::vector<Gfx> chainLoad = {
+        gsDPSetTextureImage(G_IM_FMT_CI, G_IM_SIZ_16b, kPaddedRow / 2, chain.data()),
+        gsDPSetTile(G_IM_FMT_CI, G_IM_SIZ_16b, 0, 0, G_TX_LOADTILE, 0, 0, 0, 0, 0, 0, 0),
+        gsDPLoadSync(),
+        gsDPLoadBlock(G_TX_LOADTILE, 0, 0, (uint32_t)chain.size() / 2 - 1, 0),
+        gsDPPipeSync(),
+        gsDPSetTile(G_IM_FMT_CI, G_IM_SIZ_8b, kLevel1Row / 8, kLevel1Tmem, 1, 0, G_TX_CLAMP, 5, 1, G_TX_CLAMP, 5, 1),
+        gsDPSetTileSize(1, 0, 0, (kLevel1Size - 1) << G_TEXTURE_IMAGE_FRAC, (kLevel1Size - 1) << G_TEXTURE_IMAGE_FRAC),
+    };
+    const auto uploads = Uploads(Draw(chainLoad));
+    ASSERT_EQ(uploads.size(), 1u);
+
+    const auto& want = reference[0];
+    const auto& got = uploads[0];
+    ASSERT_EQ(got.width, want.width);
+    ASSERT_EQ(got.height, want.height);
+    EXPECT_EQ(got.rgba32, want.rgba32);
 }
 
 } // namespace
