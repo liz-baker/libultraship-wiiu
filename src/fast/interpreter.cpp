@@ -616,6 +616,19 @@ static uint32_t TileTmemByteOffset(const RDP* rdp, uint8_t tile) {
     return (tileTmem - loaded.tmem_base) * 8u;
 }
 
+// Bytes an import can read rows from at TileTextureAddr(): the loaded block from this tile's own
+// TMEM address to the block's end. A tile pointing partway into a block (a detail tile offset
+// into its texture) would otherwise read past the end of the source by its offset. A replacement
+// texture is read from its own start, so it keeps the whole size.
+static uint32_t TileImportSizeBytes(const RDP* rdp, uint8_t tile, bool importReplacement) {
+    uint32_t size = rdp->loaded_texture[rdp->texture_tile[tile].tmem_index].size_bytes;
+    if (importReplacement) {
+        return size;
+    }
+    uint32_t offset = TileTmemByteOffset(rdp, tile);
+    return offset < size ? size - offset : 0;
+}
+
 // Same lookup ImportTexture* has always done (loaded_texture[tmem_index].addr), adjusted for
 // where this tile's own data starts within that block. Stays nullptr, rather than an offset
 // past a null base, when the slot has nothing loaded - callers already branch on that.
@@ -819,7 +832,7 @@ void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
     uint32_t widthBytes = GetEffectiveLineSize(line_size_bytes, fullImageLineSizeBytes, sizeBytes,
                                                mRdp->texture_tile[tile].line_size_bytes);
     uint32_t width = widthBytes / 2;
-    uint32_t height = widthBytes > 0 ? sizeBytes / widthBytes : 0;
+    uint32_t height = widthBytes > 0 ? TileImportSizeBytes(mRdp, tile, importReplacement) / widthBytes : 0;
 
     // Clamp to the rendered region only when the loaded buffer is ~1.33x of it (mipmap
     // pyramid signature). Window-scrolling tiles have loaded ≈ rendered or loaded >> rendered;
@@ -900,7 +913,7 @@ void Interpreter::ImportTextureRgba32(int tile, bool importReplacement) {
     uint32_t widthBytes = GetEffectiveLineSize(line_size_bytes, full_image_line_size_bytes, size_bytes,
                                                mRdp->texture_tile[tile].line_size_bytes * 2);
     uint32_t width = widthBytes / 4;
-    uint32_t height = widthBytes > 0 ? size_bytes / widthBytes : 0;
+    uint32_t height = widthBytes > 0 ? TileImportSizeBytes(mRdp, tile, importReplacement) / widthBytes : 0;
 
     // Clamp to the rendered region only when the loaded buffer is ~1.33x of it (mipmap
     // pyramid signature). Window-scrolling tiles have loaded ≈ rendered or loaded >> rendered;
@@ -972,7 +985,7 @@ void Interpreter::ImportTextureIA4(int tile, bool importReplacement) {
     uint32_t widthBytes = GetEffectiveLineSize(lineSizeBytes, fullImageLineSizeBytes, sizeBytes,
                                                mRdp->texture_tile[tile].line_size_bytes);
     uint32_t width = widthBytes * 2;
-    uint32_t height = widthBytes > 0 ? sizeBytes / widthBytes : 0;
+    uint32_t height = widthBytes > 0 ? TileImportSizeBytes(mRdp, tile, importReplacement) / widthBytes : 0;
 
     // A 4-bit row is padded to a whole byte, so an odd-width image imports one texel too wide; the
     // sampling scale is derived from the clamped tile width, so trim to it like the other importers.
@@ -1024,7 +1037,7 @@ void Interpreter::ImportTextureIA8(int tile, bool importReplacement) {
 
     uint32_t width = GetEffectiveLineSize(lineSizeBytes, fullImageLineSizeBytes, sizeBytes,
                                           mRdp->texture_tile[tile].line_size_bytes);
-    uint32_t height = width > 0 ? sizeBytes / width : 0;
+    uint32_t height = width > 0 ? TileImportSizeBytes(mRdp, tile, importReplacement) / width : 0;
 
     if (fullImageLineSizeBytes == sizeBytes) {
         fullImageLineSizeBytes = width;
@@ -1068,7 +1081,7 @@ void Interpreter::ImportTextureIA16(int tile, bool importReplacement) {
     uint32_t widthBytes = GetEffectiveLineSize(line_size_bytes, full_image_line_size_bytes, size_bytes,
                                                mRdp->texture_tile[tile].line_size_bytes);
     uint32_t width = widthBytes / 2;
-    uint32_t height = widthBytes > 0 ? size_bytes / widthBytes : 0;
+    uint32_t height = widthBytes > 0 ? TileImportSizeBytes(mRdp, tile, importReplacement) / widthBytes : 0;
 
     // A single line of pixels should not equal the entire image (height == 1 non-withstanding)
     if (full_image_line_size_bytes == size_bytes) {
@@ -1119,7 +1132,7 @@ void Interpreter::ImportTextureI4(int tile, bool importReplacement) {
     uint32_t widthBytes = GetEffectiveLineSize(lineSizeBytes, fullImageLineSizeBytes, sizeBytes,
                                                mRdp->texture_tile[tile].line_size_bytes);
     uint32_t width = widthBytes * 2;
-    uint32_t height = widthBytes > 0 ? sizeBytes / widthBytes : 0;
+    uint32_t height = widthBytes > 0 ? TileImportSizeBytes(mRdp, tile, importReplacement) / widthBytes : 0;
 
     // A 4-bit row is padded to a whole byte, so an odd-width image imports one texel too wide; the
     // sampling scale is derived from the clamped tile width, so trim to it like the other importers.
@@ -1178,7 +1191,7 @@ void Interpreter::ImportTextureI8(int tile, bool importReplacement) {
 
     uint32_t width = GetEffectiveLineSize(lineSizeBytes, fullImageLineSizeBytes, sizeBytes,
                                           mRdp->texture_tile[tile].line_size_bytes);
-    uint32_t height = width > 0 ? sizeBytes / width : 0;
+    uint32_t height = width > 0 ? TileImportSizeBytes(mRdp, tile, importReplacement) / width : 0;
 
     if (fullImageLineSizeBytes == sizeBytes) {
         fullImageLineSizeBytes = width;
@@ -1236,7 +1249,8 @@ void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
 
     // CI4: 2 pixels per byte
     uint32_t width = resultLineSizeBytes * 2;
-    uint32_t height = resultLineSizeBytes > 0 ? sizeBytes / resultLineSizeBytes : 0;
+    uint32_t height =
+        resultLineSizeBytes > 0 ? TileImportSizeBytes(mRdp, tile, importReplacement) / resultLineSizeBytes : 0;
 
     // Clamp to the rendered region only when the loaded buffer is ~1.33x of it (mipmap
     // pyramid signature). Window-scrolling tiles have loaded ≈ rendered or loaded >> rendered;
@@ -1341,7 +1355,8 @@ void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
     }
 
     uint32_t width = resultLineSizeBytes;
-    uint32_t height = resultLineSizeBytes > 0 ? sizeBytes / resultLineSizeBytes : 0;
+    uint32_t height =
+        resultLineSizeBytes > 0 ? TileImportSizeBytes(mRdp, tile, importReplacement) / resultLineSizeBytes : 0;
 
     // Clamp to the rendered region only when the loaded buffer is ~1.33x of it (mipmap
     // pyramid signature). Window-scrolling tiles have loaded ≈ rendered or loaded >> rendered;
