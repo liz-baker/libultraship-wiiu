@@ -526,5 +526,47 @@ TEST_F(Ci8ChainDrawTest, PaddedBaseLevelUploadsLikeCompactRows) {
     EXPECT_EQ(got.rgba32, want.rgba32);
 }
 
+// A 64x64 4-bit chain on a tile that wraps (a mask of 6) rather than clamps: the block holds the lower
+// levels below the base level, and the upload is cut back to the tile like the draw sizes its texture.
+TEST(WrappedFourBitChainDrawTest, UploadIsCutBackToTheMaskedTile) {
+    constexpr uint32_t kRowBytes = 32;
+    // 64x64, 32x32, 16x16 and 8x8 at rows of 32, 16, 8 and 8 bytes.
+    constexpr uint32_t kChainBytes = 2048 + 512 + 128 + 64;
+    std::vector<uint8_t> texels(kChainBytes, 0x11);
+    FixedMtx identity = IdentityMtx();
+    Vtx vtx[3] = {};
+    for (int i = 0; i < 3; i++) {
+        vtx[i].v.cn[3] = 255;
+    }
+    vtx[1].v.ob[0] = 1;
+    vtx[2].v.ob[1] = 1;
+
+    std::vector<Gfx> dl = {
+        gsSPMatrix(&identity, G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH),
+        gsSPMatrix(&identity, G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH),
+        gsSPClearGeometryMode(G_CULL_BOTH | G_LIGHTING | G_FOG),
+        gsDPSetCycleType(G_CYC_1CYCLE),
+        gsDPSetCombineMode(G_CC_DECALRGB, G_CC_DECALRGB),
+        gsSPTexture(0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON),
+        gsDPSetTextureImage(G_IM_FMT_I, G_IM_SIZ_16b, kRowBytes / 2, texels.data()),
+        gsDPSetTile(G_IM_FMT_I, G_IM_SIZ_16b, 0, 0, G_TX_LOADTILE, 0, 0, 0, 0, 0, 0, 0),
+        gsDPLoadSync(),
+        gsDPLoadBlock(G_TX_LOADTILE, 0, 0, kChainBytes / 2 - 1, 0),
+        gsDPPipeSync(),
+        gsDPSetTile(G_IM_FMT_I, G_IM_SIZ_4b, kRowBytes / 8, 0, 0, 0, G_TX_WRAP, 6, 0, G_TX_WRAP, 6, 0),
+        gsDPSetTileSize(0, 0, 0, 63 << G_TEXTURE_IMAGE_FRAC, 63 << G_TEXTURE_IMAGE_FRAC),
+        gsSPVertex(vtx, 3, 0),
+        gsSP1Triangle(0, 1, 2, 0),
+        gsSPEndDisplayList(),
+    };
+    NullBackendInterpreter h;
+    h.Run(dl.data());
+
+    ASSERT_EQ(h.rapi.uploads.size(), 1u);
+    const auto& up = h.rapi.uploads[0];
+    EXPECT_EQ(up.width, 64u);
+    EXPECT_EQ(up.height, 64u);
+}
+
 } // namespace
 } // namespace Fast
