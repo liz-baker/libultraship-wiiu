@@ -279,10 +279,6 @@ struct RSP {
     // colour/normal entries, indexed by a per-vertex `colour >> 2` from PD's own Vtx struct.
     // Set by gfx_col_handler_indy_pd, read by gfx_vtx_handler_indy_pd. See issue #28.
     const uint8_t* indy_pd_vertex_colors = nullptr;
-
-    // GoldenEye's G_MW_PERSPNORM word (see IndyGeNonPerspectiveTexScale). 0xFFFF until a display
-    // list sets it.
-    uint16_t indy_ge_persp_norm = 0xFFFF;
 };
 
 struct RDP {
@@ -665,11 +661,6 @@ const char* GfxGetOpcodeName(int8_t opcode);
 using IndyTri4Vertices = std::array<std::array<uint8_t, 3>, 4>;
 IndyTri4Vertices DecodeIndyTri4Vertices(uint32_t w0, uint32_t w1);
 bool IsIndyTri4TriangleDrawn(const std::array<uint8_t, 3>& triangle);
-
-// Factor GoldenEye's RSP effectively applies to a vertex's ST when the triangle is drawn with
-// G_TP_NONE (see issue #73). Pure so it is unit-testable without an Interpreter instance.
-// `w` is the vertex's clip-space w and `perspNorm` the raw G_MW_PERSPNORM word.
-float IndyGeNonPerspectiveTexScale(float w, uint16_t perspNorm);
 
 // Collects the mip chain the RDP would select from for a draw whose G_TEXTURE named `baseTile`
 // and `maxLevel` (issue #77): level n lives in tile baseTile + n at its own TMEM address. The
