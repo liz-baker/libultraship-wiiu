@@ -675,6 +675,36 @@ static uint32_t GetTileSizeFromCoordinates(float low, float high) {
     return highWhole - lowWhole + 1u;
 }
 
+// Trims an import's size to the tile it is drawn with, as the draw sizes its texture: a block that
+// holds more than the tile (a mip chain's lower levels follow its base level) is cut back to it,
+// and a masked axis wraps every 2^mask texels.
+static void TrimImportToTile(const RDP* rdp, int tile, bool isHd, uint32_t* width, uint32_t* height) {
+    const auto& t = rdp->texture_tile[tile];
+    const uint32_t tileW = GetTileSizeFromCoordinates(t.uls, t.lrs);
+    const uint32_t tileH = GetTileSizeFromCoordinates(t.ult, t.lrt);
+    const uint32_t loadedPixels = *width * *height;
+    const uint32_t renderedPixels = tileW * tileH;
+    // Only a loaded buffer ~1.33x the rendered region is a mipmap pyramid; window-scrolling tiles
+    // load about as much as they render, or far more.
+    const bool pyramidLike =
+        renderedPixels > 0 && loadedPixels > renderedPixels && loadedPixels * 8 < renderedPixels * 13;
+    const bool clampS = (t.cms & G_TX_CLAMP) != 0;
+    const bool clampT = (t.cmt & G_TX_CLAMP) != 0;
+    // A mask smaller than the tile region is stale tile state, not a real load.
+    if (t.masks != 0 && (1u << t.masks) >= tileW && (1u << t.masks) < *width) {
+        *width = 1u << t.masks;
+    }
+    if (t.maskt != 0 && (1u << t.maskt) >= tileH && (1u << t.maskt) < *height) {
+        *height = 1u << t.maskt;
+    }
+    if ((isHd || pyramidLike || clampS) && tileW > 0 && tileW < *width) {
+        *width = tileW;
+    }
+    if ((isHd || pyramidLike || clampT) && tileH > 0 && tileH < *height) {
+        *height = tileH;
+    }
+}
+
 // Bytes `texels` texels of size `siz` take up in a row, rounded up to a whole byte.
 static uint32_t TexelRowBytes(uint8_t siz, uint32_t texels) {
     switch (siz) {
@@ -1000,17 +1030,8 @@ void Interpreter::ImportTextureIA4(int tile, bool importReplacement) {
     uint32_t width = widthBytes * 2;
     uint32_t height = widthBytes > 0 ? TileImportSizeBytes(mRdp, tile, importReplacement) / widthBytes : 0;
 
-    // A 4-bit row is padded to a whole byte, so an odd-width image imports one texel too wide; the
-    // sampling scale is derived from the clamped tile width, so trim to it like the other importers.
-    uint32_t tileW = GetTileSizeFromCoordinates(mRdp->texture_tile[tile].uls, mRdp->texture_tile[tile].lrs);
-    if ((mRdp->texture_tile[tile].cms & G_TX_CLAMP) && tileW > 0 && tileW < width) {
-        width = tileW;
-    }
-    // The block can hold more rows than the tile: a mip chain's lower levels follow its base level.
-    uint32_t tileH = GetTileSizeFromCoordinates(mRdp->texture_tile[tile].ult, mRdp->texture_tile[tile].lrt);
-    if ((mRdp->texture_tile[tile].cmt & G_TX_CLAMP) && tileH > 0 && tileH < height) {
-        height = tileH;
-    }
+    // A 4-bit row is padded to a whole byte, so an odd-width image imports one texel too wide.
+    TrimImportToTile(mRdp, tile, metadata->h_byte_scale != 1 || metadata->v_pixel_scale != 1, &width, &height);
 
     if (fullImageLineSizeBytes == sizeBytes) {
         fullImageLineSizeBytes = widthBytes;
@@ -1149,17 +1170,8 @@ void Interpreter::ImportTextureI4(int tile, bool importReplacement) {
     uint32_t width = widthBytes * 2;
     uint32_t height = widthBytes > 0 ? TileImportSizeBytes(mRdp, tile, importReplacement) / widthBytes : 0;
 
-    // A 4-bit row is padded to a whole byte, so an odd-width image imports one texel too wide; the
-    // sampling scale is derived from the clamped tile width, so trim to it like the other importers.
-    uint32_t tileW = GetTileSizeFromCoordinates(mRdp->texture_tile[tile].uls, mRdp->texture_tile[tile].lrs);
-    if ((mRdp->texture_tile[tile].cms & G_TX_CLAMP) && tileW > 0 && tileW < width) {
-        width = tileW;
-    }
-    // The block can hold more rows than the tile: a mip chain's lower levels follow its base level.
-    uint32_t tileH = GetTileSizeFromCoordinates(mRdp->texture_tile[tile].ult, mRdp->texture_tile[tile].lrt);
-    if ((mRdp->texture_tile[tile].cmt & G_TX_CLAMP) && tileH > 0 && tileH < height) {
-        height = tileH;
-    }
+    // A 4-bit row is padded to a whole byte, so an odd-width image imports one texel too wide.
+    TrimImportToTile(mRdp, tile, metadata->h_byte_scale != 1 || metadata->v_pixel_scale != 1, &width, &height);
 
     // A single line of pixels should not equal the entire image (height == 1 non-withstanding)
     if (fullImageLineSizeBytes == sizeBytes) {
