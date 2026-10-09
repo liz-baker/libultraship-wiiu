@@ -328,5 +328,97 @@ TEST_F(MipChainDrawTest, LodBiasCVarTurnsTheBiasOff) {
     }
 }
 
+// A 4-bit chain of odd size loaded the way a GoldenEye texture request loads it: one block, no dxt,
+// as bytes, with the base level's padded row named as the image width. The block is not a whole
+// number of base rows, and each level past the base has a row stride of its own.
+class FourBitChainDrawTest : public testing::Test {
+  protected:
+    static constexpr uint32_t kBaseSize = 65;
+    static constexpr uint32_t kLevels = 4;
+
+    struct Level {
+        uint32_t width, height, tmemWords, lineWords;
+    };
+
+    void SetUp() override {
+        uint32_t size = kBaseSize;
+        uint32_t tmem = 0;
+        for (uint32_t n = 0; n < kLevels; n++) {
+            const uint32_t lineWords = (size + 15) / 16;
+            levels.push_back({ size, size, tmem, lineWords });
+            tmem += lineWords * size;
+            size = (size + 1) / 2;
+        }
+        texels.assign(tmem * 8, 0);
+        for (uint32_t n = 0; n < kLevels; n++) {
+            // A different nibble in every level, so a level read from the wrong rows shows.
+            const uint8_t nibble = (uint8_t)(n + 1);
+            for (uint32_t y = 0; y < levels[n].height; y++) {
+                for (uint32_t x = 0; x < levels[n].width; x++) {
+                    uint8_t& byte = texels[levels[n].tmemWords * 8 + y * levels[n].lineWords * 8 + x / 2];
+                    byte |= (x % 2 == 0) ? (nibble << 4) : nibble;
+                }
+            }
+        }
+        for (int i = 0; i < 3; i++) {
+            vtx[i].v.cn[3] = 255;
+        }
+        vtx[1].v.ob[0] = 1;
+        vtx[2].v.ob[1] = 1;
+    }
+
+    void Run() {
+        std::vector<Gfx> dl = {
+            gsSPMatrix(&identity, G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH),
+            gsSPMatrix(&identity, G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH),
+            gsSPClearGeometryMode(G_CULL_BOTH | G_LIGHTING | G_FOG),
+            gsDPSetCycleType(G_CYC_2CYCLE),
+            gsDPSetTextureLOD(G_TL_TILE),
+            gsDPSetCombineMode(G_CC_TRILERP, G_CC_TRILERP),
+            gsSPTexture(0xFFFF, 0xFFFF, kLevels - 1, G_TX_RENDERTILE, G_ON),
+            gsDPSetTextureImage(G_IM_FMT_I, G_IM_SIZ_8b, levels[0].lineWords * 8, texels.data()),
+            gsDPSetTile(G_IM_FMT_I, G_IM_SIZ_8b, 0, 0, G_TX_LOADTILE, 0, 0, 0, 0, 0, 0, 0),
+            gsDPLoadSync(),
+            gsDPLoadBlock(G_TX_LOADTILE, 0, 0, (uint32_t)texels.size() - 1, 0),
+            gsDPPipeSync(),
+        };
+        for (uint8_t n = 0; n < kLevels; n++) {
+            const Level& level = levels[n];
+            dl.push_back(gsDPSetTile(G_IM_FMT_I, G_IM_SIZ_4b, level.lineWords, level.tmemWords, n, 0, G_TX_CLAMP, 0, n,
+                                     G_TX_CLAMP, 0, n));
+            dl.push_back(gsDPSetTileSize(n, 0, 0, (level.width - 1) << G_TEXTURE_IMAGE_FRAC,
+                                         (level.height - 1) << G_TEXTURE_IMAGE_FRAC));
+        }
+        dl.push_back(gsSPVertex(vtx, 3, 0));
+        dl.push_back(gsSP1Triangle(0, 1, 2, 0));
+        dl.push_back(gsSPEndDisplayList());
+        h.Run(dl.data());
+    }
+
+    static void ExpectIntensity(const NullGfxRenderingAPI::Upload& up, uint32_t size, uint8_t nibble) {
+        ASSERT_EQ(up.width, size);
+        ASSERT_EQ(up.height, size);
+        const uint8_t expected = (uint8_t)(nibble * 17);
+        for (size_t p = 0; p < (size_t)size * size; p++) {
+            ASSERT_EQ(up.rgba32[p * 4], expected) << "texel " << p;
+        }
+    }
+
+    NullBackendInterpreter h;
+    FixedMtx identity = IdentityMtx();
+    Vtx vtx[3] = {};
+    std::vector<Level> levels;
+    std::vector<uint8_t> texels;
+};
+
+// Without texture LOD the draw samples tile 0 and, for TEXEL1, tile 1: each must read its own rows.
+TEST_F(FourBitChainDrawTest, EachTileReadsItsOwnRows) {
+    Run();
+
+    ASSERT_EQ(h.rapi.uploads.size(), 2u);
+    ExpectIntensity(h.rapi.uploads[0], levels[0].width, 1);
+    ExpectIntensity(h.rapi.uploads[1], levels[1].width, 2);
+}
+
 } // namespace
 } // namespace Fast
