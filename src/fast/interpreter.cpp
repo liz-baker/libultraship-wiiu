@@ -840,8 +840,7 @@ void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
     }
 
     uint32_t sizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes;
-    uint32_t fullImageLineSizeBytes =
-        TileSourceLineSize(mRdp, tile, true);
+    uint32_t fullImageLineSizeBytes = TileSourceLineSize(mRdp, tile, true);
     uint32_t line_size_bytes = TileSourceLineSize(mRdp, tile, false);
 
     uint32_t widthBytes = GetEffectiveLineSize(line_size_bytes, fullImageLineSizeBytes, sizeBytes,
@@ -921,8 +920,7 @@ void Interpreter::ImportTextureRgba32(int tile, bool importReplacement) {
     }
 
     uint32_t size_bytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes;
-    uint32_t full_image_line_size_bytes =
-        TileSourceLineSize(mRdp, tile, true);
+    uint32_t full_image_line_size_bytes = TileSourceLineSize(mRdp, tile, true);
     uint32_t line_size_bytes = TileSourceLineSize(mRdp, tile, false);
 
     uint32_t widthBytes = GetEffectiveLineSize(line_size_bytes, full_image_line_size_bytes, size_bytes,
@@ -993,8 +991,7 @@ void Interpreter::ImportTextureIA4(int tile, bool importReplacement) {
     }
 
     uint32_t sizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes;
-    uint32_t fullImageLineSizeBytes =
-        TileSourceLineSize(mRdp, tile, true);
+    uint32_t fullImageLineSizeBytes = TileSourceLineSize(mRdp, tile, true);
     uint32_t lineSizeBytes = TileSourceLineSize(mRdp, tile, false);
 
     uint32_t widthBytes = GetEffectiveLineSize(lineSizeBytes, fullImageLineSizeBytes, sizeBytes,
@@ -1051,8 +1048,7 @@ void Interpreter::ImportTextureIA8(int tile, bool importReplacement) {
     }
 
     uint32_t sizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes;
-    uint32_t fullImageLineSizeBytes =
-        TileSourceLineSize(mRdp, tile, true);
+    uint32_t fullImageLineSizeBytes = TileSourceLineSize(mRdp, tile, true);
     uint32_t lineSizeBytes = TileSourceLineSize(mRdp, tile, false);
 
     uint32_t width = GetEffectiveLineSize(lineSizeBytes, fullImageLineSizeBytes, sizeBytes,
@@ -1094,8 +1090,7 @@ void Interpreter::ImportTextureIA16(int tile, bool importReplacement) {
     }
 
     uint32_t size_bytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes;
-    uint32_t full_image_line_size_bytes =
-        TileSourceLineSize(mRdp, tile, true);
+    uint32_t full_image_line_size_bytes = TileSourceLineSize(mRdp, tile, true);
     uint32_t line_size_bytes = TileSourceLineSize(mRdp, tile, false);
 
     uint32_t widthBytes = GetEffectiveLineSize(line_size_bytes, full_image_line_size_bytes, size_bytes,
@@ -1145,8 +1140,7 @@ void Interpreter::ImportTextureI4(int tile, bool importReplacement) {
     }
 
     uint32_t sizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes;
-    uint32_t fullImageLineSizeBytes =
-        TileSourceLineSize(mRdp, tile, true);
+    uint32_t fullImageLineSizeBytes = TileSourceLineSize(mRdp, tile, true);
     uint32_t lineSizeBytes = TileSourceLineSize(mRdp, tile, false);
 
     uint32_t widthBytes = GetEffectiveLineSize(lineSizeBytes, fullImageLineSizeBytes, sizeBytes,
@@ -1210,8 +1204,7 @@ void Interpreter::ImportTextureI8(int tile, bool importReplacement) {
     }
 
     uint32_t sizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes;
-    uint32_t fullImageLineSizeBytes =
-        TileSourceLineSize(mRdp, tile, true);
+    uint32_t fullImageLineSizeBytes = TileSourceLineSize(mRdp, tile, true);
     uint32_t lineSizeBytes = TileSourceLineSize(mRdp, tile, false);
 
     uint32_t width = GetEffectiveLineSize(lineSizeBytes, fullImageLineSizeBytes, sizeBytes,
@@ -1238,8 +1231,7 @@ void Interpreter::ImportTextureI8(int tile, bool importReplacement) {
 }
 
 void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
-    uint32_t fullImageLineSizeBytes =
-        TileSourceLineSize(mRdp, tile, true);
+    uint32_t fullImageLineSizeBytes = TileSourceLineSize(mRdp, tile, true);
     const RawTexMetadata* metadata = &mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata;
     const uint8_t* addr =
         importReplacement && (metadata->resource != nullptr)
@@ -1346,8 +1338,7 @@ void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
     }
 
     uint32_t sizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes;
-    uint32_t fullImageLineSizeBytes =
-        TileSourceLineSize(mRdp, tile, true);
+    uint32_t fullImageLineSizeBytes = TileSourceLineSize(mRdp, tile, true);
     uint32_t lineSizeBytes = TileSourceLineSize(mRdp, tile, false);
 
     if (mRdp->palettes[0] == nullptr || mRdp->palettes[1] == nullptr) {
@@ -1482,8 +1473,7 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
         return;
     }
 
-    uint32_t fullImageLineSizeBytes =
-        TileSourceLineSize(mRdp, tile, true);
+    uint32_t fullImageLineSizeBytes = TileSourceLineSize(mRdp, tile, true);
     uint32_t line_size_bytes = TileSourceLineSize(mRdp, tile, false);
 
     // Get the resource's true image size
@@ -2339,8 +2329,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
             uint32_t loaded_line_size = TileSourceLineSize(mRdp, tile, false);
             uint32_t loaded_size = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes;
-            uint32_t loaded_full_line =
-                TileSourceLineSize(mRdp, tile, true);
+            uint32_t loaded_full_line = TileSourceLineSize(mRdp, tile, true);
             uint32_t tex_size_bytes;
             uint32_t line_size;
             if ((loaded_line_size != loaded_size || loaded_full_line != loaded_size) && loaded_line_size > 0) {
