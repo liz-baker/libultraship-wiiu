@@ -568,5 +568,58 @@ TEST(WrappedFourBitChainDrawTest, UploadIsCutBackToTheMaskedTile) {
     EXPECT_EQ(up.height, 64u);
 }
 
+// 8-bit and 16-bit I and IA chains on a tile that wraps: the block holds the lower levels below the
+// base level, and the upload is cut back to the tile (a 64x32 chain of 2720 bytes is 42 rows of 64).
+TEST(WrappedByteChainDrawTest, UploadIsCutBackToTheMaskedTile) {
+    struct Case {
+        uint32_t fmt, siz, width, height, masks, maskt;
+        const char* name;
+    };
+    const Case cases[] = {
+        { G_IM_FMT_I, G_IM_SIZ_8b, 64, 32, 6, 5, "I8" },
+        { G_IM_FMT_IA, G_IM_SIZ_8b, 64, 32, 6, 5, "IA8" },
+        { G_IM_FMT_IA, G_IM_SIZ_16b, 32, 32, 5, 5, "IA16" },
+    };
+    // Four levels at rows of 64, 32, 16 and 8 bytes: 2048 + 512 + 128 + 32 bytes.
+    constexpr uint32_t kChainBytes = 2720;
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.name);
+        const uint32_t rowBytes = c.width * (c.siz == G_IM_SIZ_16b ? 2 : 1);
+        std::vector<uint8_t> texels(kChainBytes, 0x11);
+        FixedMtx identity = IdentityMtx();
+        Vtx vtx[3] = {};
+        for (int i = 0; i < 3; i++) {
+            vtx[i].v.cn[3] = 255;
+        }
+        vtx[1].v.ob[0] = 1;
+        vtx[2].v.ob[1] = 1;
+
+        std::vector<Gfx> dl = {
+            gsSPMatrix(&identity, G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH),
+            gsSPMatrix(&identity, G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH),
+            gsSPClearGeometryMode(G_CULL_BOTH | G_LIGHTING | G_FOG),
+            gsDPSetCycleType(G_CYC_1CYCLE),
+            gsDPSetCombineMode(G_CC_DECALRGB, G_CC_DECALRGB),
+            gsSPTexture(0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON),
+            gsDPSetTextureImage(c.fmt, G_IM_SIZ_16b, rowBytes / 2, texels.data()),
+            gsDPSetTile(c.fmt, G_IM_SIZ_16b, 0, 0, G_TX_LOADTILE, 0, 0, 0, 0, 0, 0, 0),
+            gsDPLoadSync(),
+            gsDPLoadBlock(G_TX_LOADTILE, 0, 0, kChainBytes / 2 - 1, 0),
+            gsDPPipeSync(),
+            gsDPSetTile(c.fmt, c.siz, rowBytes / 8, 0, 0, 0, G_TX_WRAP, c.maskt, 0, G_TX_WRAP, c.masks, 0),
+            gsDPSetTileSize(0, 0, 0, (c.width - 1) << G_TEXTURE_IMAGE_FRAC, (c.height - 1) << G_TEXTURE_IMAGE_FRAC),
+            gsSPVertex(vtx, 3, 0),
+            gsSP1Triangle(0, 1, 2, 0),
+            gsSPEndDisplayList(),
+        };
+        NullBackendInterpreter h;
+        h.Run(dl.data());
+
+        ASSERT_EQ(h.rapi.uploads.size(), 1u);
+        EXPECT_EQ(h.rapi.uploads[0].width, c.width);
+        EXPECT_EQ(h.rapi.uploads[0].height, c.height);
+    }
+}
+
 } // namespace
 } // namespace Fast
