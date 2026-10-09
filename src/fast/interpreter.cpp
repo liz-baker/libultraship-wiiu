@@ -2458,11 +2458,6 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     struct GfxClipParameters clip_parameters = mRapi->GetClipParameters();
 
-    // GoldenEye's ucode leaves the ST scaled by the W reciprocal, which the RDP only divides back
-    // out when texture perspective is on. See issue #73.
-    const bool indyGeScalesNonPerspectiveST =
-        ucode_handler_index == ucode_indy_ge && (mRdp->other_mode_h & (1U << G_MDSFT_TEXTPERSP)) == G_TP_NONE;
-
     for (int i = 0; i < 3; i++) {
         float z = v_arr[i]->z, w = v_arr[i]->w;
         if (clip_parameters.z_is_from_0_to_1) {
@@ -2480,11 +2475,6 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             }
             float u = v_arr[i]->u / 32.0f;
             float v = v_arr[i]->v / 32.0f;
-            if (indyGeScalesNonPerspectiveST) {
-                const float scale = IndyGeNonPerspectiveTexScale(v_arr[i]->w, mRsp->indy_ge_persp_norm);
-                u *= scale;
-                v *= scale;
-            }
 
             uint32_t uv_tile = effective_tile[t];
             int shifts = mRdp->texture_tile[uv_tile].shifts;
@@ -4014,19 +4004,6 @@ bool gfx_moveword_handler_f3d(F3DGfx** cmd0) {
     return false;
 }
 
-// GoldenEye also keeps the perspective normalisation word, which its vertex stage folds into the
-// W reciprocal (see IndyGeNonPerspectiveTexScale). Everything else is plain F3D.
-bool gfx_moveword_handler_indy_ge(F3DGfx** cmd0) {
-    Interpreter* gfx = mInstance.lock().get();
-    F3DGfx* cmd = *cmd0;
-
-    if (C0(0, 8) == G_MW_PERSPNORM) {
-        gfx->mRsp->indy_ge_persp_norm = (uint16_t)cmd->words.w1;
-        return false;
-    }
-    return gfx_moveword_handler_f3d(cmd0);
-}
-
 bool gfx_texture_handler_f3dex2(F3DGfx** cmd0) {
     Interpreter* gfx = mInstance.lock().get();
     F3DGfx* cmd = *cmd0;
@@ -4395,22 +4372,6 @@ bool gfx_tri4_handler_indy(F3DGfx** cmd0) {
     }
 
     return false;
-}
-
-// Model of the ST scaling GoldenEye's RSP applies in the triangle path (issue #73). The ucode
-// multiplies the vertex ST by the W reciprocal, normalised by the G_MW_PERSPNORM word, so the
-// RDP's perspective divide recovers the true coordinate. With G_TP_NONE that divide never runs
-// and the scaled ST reach the pixel pipeline as-is. The reciprocal saturates, so for the small
-// normalised w of an ortho projection the factor is a constant 0.5 - the one value verified
-// against hardware (a GE character-select portrait's 0x1000 ST spans 64 texels, not 128). The
-// 1/w roll-off beyond that is the same model extended, not separately verified.
-float IndyGeNonPerspectiveTexScale(float w, uint16_t perspNorm) {
-    constexpr float kSaturatedReciprocal = 0.5f;
-    const float normalizedW = w * (float)perspNorm / 65536.0f;
-    if (normalizedW <= 1.0f) {
-        return kSaturatedReciprocal;
-    }
-    return kSaturatedReciprocal / normalizedW;
 }
 
 // GE-only custom texture-bank selection (gsSPUseTexture). goldeneye-pc-port's own gfx_pc.cpp
@@ -5437,7 +5398,7 @@ static constexpr UcodeHandler indyGeHandlers = {
     { F3DEX_G_SETOTHERMODE_L, { "G_SETOTHERMODE_L", gfx_othermode_l_handler_f3d } },
     { F3DEX_G_SETOTHERMODE_H, { "G_SETOTHERMODE_H", gfx_othermode_h_handler_f3d } },
     { F3DEX_G_TEXTURE, { "G_TEXTURE", gfx_texture_handler_f3d } },
-    { F3DEX_G_MOVEWORD, { "G_MOVEWORD", gfx_moveword_handler_indy_ge } },
+    { F3DEX_G_MOVEWORD, { "G_MOVEWORD", gfx_moveword_handler_f3d } },
     { INDY_G_TRI4, { "G_TRI4", gfx_tri4_handler_indy } },
     { INDY_G_SETTEX, { "G_SETTEX", gfx_settex_handler_indy_ge } },
 };
