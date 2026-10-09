@@ -1667,6 +1667,19 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
         if (v == nullptr) {
             return;
         }
+        // TEMP DIAG
+        if (i == 0) {
+            static unsigned diagV = 0;
+            if (diagV++ % 200 == 0) {
+                const int nl = mRsp->current_num_lights;
+                printf("DIAG vtx n=%u gm=0x%08x lighting=%d nlights=%d amb=%d,%d,%d cn=%d,%d,%d,%d ob=%d,%d,%d\n",
+                       (unsigned)n_vertices, (unsigned)mRsp->geometry_mode, (int)((mRsp->geometry_mode & G_LIGHTING) != 0),
+                       nl, nl > 0 ? (int)mRsp->current_lights[nl - 1].l.col[0] : -1,
+                       nl > 0 ? (int)mRsp->current_lights[nl - 1].l.col[1] : -1,
+                       nl > 0 ? (int)mRsp->current_lights[nl - 1].l.col[2] : -1, (int)v->cn[0], (int)v->cn[1],
+                       (int)v->cn[2], (int)v->cn[3], (int)v->ob[0], (int)v->ob[1], (int)v->ob[2]);
+            }
+        }
 
         float x = v->ob[0] * mRsp->MP_matrix[0][0] + v->ob[1] * mRsp->MP_matrix[1][0] +
                   v->ob[2] * mRsp->MP_matrix[2][0] + mRsp->MP_matrix[3][0];
@@ -2498,6 +2511,16 @@ void Interpreter::GfxSpMovememF3d(uint8_t index, uint8_t offset, const void* dat
         case F3DEX_G_MV_L6:
         case F3DEX_G_MV_L7:
             // NOTE: reads out of bounds if it is an ambient light
+            {
+                // TEMP DIAG
+                static unsigned diagM = 0;
+                if (diagM++ < 40) {
+                    const uint8_t* b = (const uint8_t*)data;
+                    printf("DIAG movemem light idx=%u slot=%d data=%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                           (unsigned)index, (int)((index - F3DEX_G_MV_L0) / 2), b[0], b[1], b[2], b[3], b[4], b[5], b[6],
+                           b[7], b[8], b[9], b[10], b[11]);
+                }
+            }
             memcpy(mRsp->current_lights + (index - F3DEX_G_MV_L0) / 2, data, sizeof(F3DLight_t));
             break;
     }

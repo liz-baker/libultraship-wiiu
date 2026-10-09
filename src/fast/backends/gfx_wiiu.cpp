@@ -442,6 +442,7 @@ bool GfxWindowBackendWiiU::IsFrameReady() {
 
         if (wait_count >= 10) {
             // GPU timed out, drop frame
+            printf("DIAG frame dropped: GPU not done (swap=%u flip=%u)\n", swap_count, flip_count); // TEMP DIAG
             return false;
         }
 
@@ -453,6 +454,11 @@ bool GfxWindowBackendWiiU::IsFrameReady() {
 }
 
 void GfxWindowBackendWiiU::SwapBuffersBegin() {
+    // TEMP DIAG
+    static unsigned diagFrames = 0;
+    if (diagFrames++ % 30 == 0) {
+        printf("DIAG frame %u present\n", diagFrames);
+    }
     GX2SwapScanBuffers();
     GX2Flush();
 

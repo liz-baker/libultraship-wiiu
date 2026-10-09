@@ -265,6 +265,10 @@ void GfxRenderingAPIGX2::UploadTexture(const uint8_t* rgba32_buf, uint32_t width
         GX2InitTextureRegs(&tex->texture);
 
         tex->texture.surface.image = memalign(tex->texture.surface.alignment, tex->texture.surface.imageSize);
+        if (!tex->texture.surface.image) { // TEMP DIAG
+            printf("DIAG texture memalign FAILED %ux%u size=%u align=%u\n", width, height,
+                   (unsigned)tex->texture.surface.imageSize, (unsigned)tex->texture.surface.alignment);
+        }
     }
 
     uint8_t* buf = (uint8_t*)tex->texture.surface.image;
@@ -275,6 +279,25 @@ void GfxRenderingAPIGX2::UploadTexture(const uint8_t* rgba32_buf, uint32_t width
     }
 
     GX2Invalidate(GX2_INVALIDATE_MODE_CPU_TEXTURE, tex->texture.surface.image, tex->texture.surface.imageSize);
+
+    // TEMP DIAG
+    {
+        static unsigned diagU = 0;
+        if (diagU++ % 100 == 0) {
+            unsigned long alphaSum = 0, rgbSum = 0;
+            const uint32_t n = width * height < 4096 ? width * height : 4096;
+            for (uint32_t i = 0; i < n; i++) {
+                alphaSum += rgba32_buf[i * 4 + 3];
+                rgbSum += rgba32_buf[i * 4] + rgba32_buf[i * 4 + 1] + rgba32_buf[i * 4 + 2];
+            }
+            printf("DIAG tex#%u %ux%u pitch=%u size=%u px0=%02x%02x%02x%02x px1=%02x%02x%02x%02x alphaSum=%lu rgbSum=%lu "
+                   "slot=%d loc=%d\n",
+                   diagU, width, height, (unsigned)tex->texture.surface.pitch, (unsigned)tex->texture.surface.imageSize,
+                   rgba32_buf[0], rgba32_buf[1], rgba32_buf[2], rgba32_buf[3], rgba32_buf[4], rgba32_buf[5],
+                   rgba32_buf[6], rgba32_buf[7], alphaSum, rgbSum, mCurrentTile,
+                   mCurrentShaderProgram ? (int)mCurrentShaderProgram->samplers_location[mCurrentTile] : -2);
+        }
+    }
 
     if (mCurrentShaderProgram && mCurrentShaderProgram->samplers_location[mCurrentTile] != -1) {
         GX2SetPixelTexture(&tex->texture, mCurrentShaderProgram->samplers_location[mCurrentTile]);
@@ -398,6 +421,44 @@ void GfxRenderingAPIGX2::SetUseAlpha(bool use_alpha) {
 }
 
 void GfxRenderingAPIGX2::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
+    // TEMP DIAG
+    static unsigned diagCalls = 0, diagSkipped = 0;
+    static unsigned long diagTris = 0;
+    diagCalls++;
+    diagTris += buf_vbo_num_tris;
+    if (!mCurrentShaderProgram) {
+        diagSkipped++;
+    }
+    if (diagCalls % 100 == 1 || diagCalls < 7) {
+        printf("DIAG draw#%u tris+=%lu skipped=%u fb=%u vp=%.1f,%.1f %.1fx%.1f sc=%u,%u %ux%u depth=%d/%d len=%u\n",
+               diagCalls, diagTris, diagSkipped, (unsigned)mCurrentFramebuffer, (double)mViewportX,
+               (double)mViewportY, (double)mViewportWidth, (double)mViewportHeight, mScissorX, mScissorY,
+               mScissorWidth, mScissorHeight, (int)mDepthTest, (int)mDepthWrite, (unsigned)buf_vbo_len);
+        if (mCurrentShaderProgram) {
+            const unsigned strideF = mCurrentShaderProgram->group.stride / sizeof(float);
+            printf("DIAG   stride=%uf inputs=%u tex=%d%d alpha=%d cmp=%d decal=%d noise=%d\n", strideF,
+                   (unsigned)mCurrentShaderProgram->num_inputs, (int)mCurrentShaderProgram->used_textures[0],
+                   (int)mCurrentShaderProgram->used_textures[1], (int)mUseAlpha, (int)mDepthCompareFunction,
+                   (int)mZmodeDecal, (int)mCurrentShaderProgram->used_noise);
+            for (int t = 0; t < 2; t++) {
+                Texture* bt = mBoundTextures[t];
+                printf("DIAG   bound[%d]=%p loc=%d", t, (void*)bt, (int)mCurrentShaderProgram->samplers_location[t]);
+                if (bt) {
+                    printf(" uploaded=%d samplerSet=%d %ux%u image=%p", (int)bt->texture_uploaded, (int)bt->sampler_set,
+                           (unsigned)bt->texture.surface.width, (unsigned)bt->texture.surface.height,
+                           bt->texture.surface.image);
+                }
+                printf("\n");
+            }
+            for (unsigned v = 0; v < 3 && (v + 1) * strideF <= buf_vbo_len; v++) {
+                printf("DIAG   v%u:", v);
+                for (unsigned f = 0; f < strideF && f < 16; f++) {
+                    printf(" %.3f", (double)buf_vbo[v * strideF + f]);
+                }
+                printf("\n");
+            }
+        }
+    }
     if (!mCurrentShaderProgram) {
         return;
     }
