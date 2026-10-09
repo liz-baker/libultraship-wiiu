@@ -94,6 +94,24 @@ TEST_F(ResolveMipChainTest, DetailModeLeavesTheBaseTileToTheCaller) {
     EXPECT_EQ(ResolveMipChain(rdp, 0, 3).numLevels, 4);
 }
 
+// A one texel image set on tiles 0 and 1 with a half texel offset (a SETTILESIZE of 2 to 2, which reads
+// as a literal one texel tile): a chain of them would ask the backend for two levels of a 1x1
+// texture, which Metal rejects.
+TEST_F(ResolveMipChainTest, NoChainFromAOneTexelBase) {
+    for (uint8_t t = 0; t < 2; t++) {
+        rdp.texture_tile[t].uls = rdp.texture_tile[t].ult = 2;
+        rdp.texture_tile[t].lrs = rdp.texture_tile[t].lrt = 2;
+    }
+    EXPECT_EQ(ResolveMipChain(rdp, 0, 1).numLevels, 0);
+}
+
+TEST_F(ResolveMipChainTest, NothingFollowsTheOneTexelLevel) {
+    rdp.texture_tile[4] = rdp.texture_tile[3];
+    rdp.texture_tile[4].tmem = kRgba16Chain[3].tmemWords;
+    SetTileSizeTexels(rdp, 4, 1, 1);
+    EXPECT_EQ(ResolveMipChain(rdp, 0, 4).numLevels, 4);
+}
+
 TEST_F(ResolveMipChainTest, TruncatesAtALevelThatDoesNotHalve) {
     SetTileSizeTexels(rdp, 2, 3, 2);
     EXPECT_EQ(ResolveMipChain(rdp, 0, 3).numLevels, 2);
