@@ -58,8 +58,10 @@ class TextureDetailTest : public testing::Test {
     }
 
     // The base chain's tiles start at `baseTile`, its block at TMEM `chainTmem`. With `withDetail`,
-    // tile 0 is a separately loaded 4x4 detail texture at TMEM 0.
-    std::vector<Gfx> DisplayList(uint32_t detailMode, uint32_t cycleType, bool withDetail, uint8_t maxLevel = 3) {
+    // tile 0 is a separately loaded 4x4 detail texture at TMEM 0, the tile itself `detailTileTmem`
+    // words into it.
+    std::vector<Gfx> DisplayList(uint32_t detailMode, uint32_t cycleType, bool withDetail, uint8_t maxLevel = 3,
+                                 uint32_t detailTileTmem = 0) {
         const uint8_t baseTile = withDetail ? 1 : 0;
         const uint32_t chainTmem = withDetail ? kChainTmemAfterDetail : 0;
         std::vector<Gfx> dl = {
@@ -81,7 +83,8 @@ class TextureDetailTest : public testing::Test {
             dl.push_back(gsDPLoadSync());
             dl.push_back(gsDPLoadBlock(G_TX_LOADTILE, 0, 0, kDetailWords * 4 - 1, 0));
             dl.push_back(gsDPPipeSync());
-            dl.push_back(gsDPSetTile(G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, 0, 0, 0, G_TX_WRAP, 2, 0, G_TX_WRAP, 2, 0));
+            dl.push_back(
+                gsDPSetTile(G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, detailTileTmem, 0, 0, G_TX_WRAP, 2, 0, G_TX_WRAP, 2, 0));
             dl.push_back(gsDPSetTileSize(0, 0, 0, 3 << G_TEXTURE_IMAGE_FRAC, 3 << G_TEXTURE_IMAGE_FRAC));
         }
         dl.push_back(gsDPSetTextureImage(G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, chainTexels.data()));
@@ -169,6 +172,25 @@ TEST_F(TextureDetailTest, DetailWithoutAChainStillBlendsTheDetail) {
     for (const auto& up : h.rapi.uploads) {
         EXPECT_TRUE(up.lowerLevels.empty());
     }
+}
+
+TEST_F(TextureDetailTest, DetailTileInsideItsBlockReadsOnlyTheRestOfIt) {
+    // One word (one row) into the 4-word detail block: three rows remain, and nothing past the
+    // block's end is read.
+    Run(DisplayList(G_TD_DETAIL, G_CYC_2CYCLE, true, 3, /*detailTileTmem=*/1));
+
+    auto* slot0 = h.interpreter->mRenderingState.mTextures[0];
+    ASSERT_NE(slot0, nullptr);
+    EXPECT_EQ(slot0->first.texture_addr, detailTexels.data() + 8);
+    size_t detailUploads = 0;
+    for (const auto& up : h.rapi.uploads) {
+        if (up.lowerLevels.empty()) {
+            detailUploads++;
+            EXPECT_EQ(up.width, 4u);
+            EXPECT_EQ(up.height, 3u);
+        }
+    }
+    EXPECT_EQ(detailUploads, 1u);
 }
 
 TEST_F(TextureDetailTest, PrimLodMinimumReachesTheBackend) {
