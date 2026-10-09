@@ -11,6 +11,8 @@ struct FrameUniforms {
 
 struct DrawUniforms {
     int textureFiltering[6];
+    float lodBias;
+    float primLodMin;
     @if(o_prim_depth)
     float prim_depth;
     @end
@@ -146,13 +148,42 @@ float4 filter3point(thread const texture2d<float> tex, thread const sampler texS
     return c0 + abs(offset.x) * (c1 - c0) + abs(offset.y) * (c2 - c0);
 }
 
-float4 hookTexture2D(thread const texture2d<float> tex, thread const sampler texSmplr, thread const float2& uv, thread const float2& texSize, thread const int filtering) {
+// filter3point() at one level of a mip chain.
+float4 filter3pointLevel(thread const texture2d<float> tex, thread const sampler texSmplr, float2 texCoord, float2 texSize, float lvl) {
+    float2 levelSize = max(floor(texSize / exp2(lvl)), float2(1.0));
+    float2 offset = fract((texCoord * levelSize) - float2(0.5));
+    offset -= float2(step(1.0, offset.x + offset.y));
+    float4 c0 = tex.sample(texSmplr, texCoord - offset / levelSize, level(lvl));
+    float4 c1 = tex.sample(texSmplr, texCoord - float2(offset.x - sign(offset.x), offset.y) / levelSize, level(lvl));
+    float4 c2 = tex.sample(texSmplr, texCoord - float2(offset.x, offset.y - sign(offset.y)) / levelSize, level(lvl));
+    return c0 + abs(offset.x) * (c1 - c0) + abs(offset.y) * (c2 - c0);
+}
+
+// The RDP's TRILERP over 3-point filtered levels: pick the level from the texel footprint the way
+// the GPU would, then blend the two levels either side of it.
+float4 filter3pointMip(thread const texture2d<float> tex, thread const sampler texSmplr, float2 texCoord, float2 texSize, float lodBias) {
+    float2 dx = dfdx(texCoord * texSize);
+    float2 dy = dfdy(texCoord * texSize);
+    float lod = 0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1e-8)) + lodBias;
+    lod = clamp(lod, 0.0, float(tex.get_num_mip_levels() - 1));
+    float level0 = floor(lod);
+    float4 c = filter3pointLevel(tex, texSmplr, texCoord, texSize, level0);
+    if (lod > level0) {
+        c = mix(c, filter3pointLevel(tex, texSmplr, texCoord, texSize, level0 + 1.0), lod - level0);
+    }
+    return c;
+}
+
+float4 hookTexture2D(thread const texture2d<float> tex, thread const sampler texSmplr, thread const float2& uv, thread const float2& texSize, thread const int filtering, float lodBias) {
 @if(o_three_point_filtering)
     if(filtering == @{FILTER_THREE_POINT}) {
+        if (tex.get_num_mip_levels() > 1) {
+            return filter3pointMip(tex, texSmplr, uv, texSize, lodBias);
+        }
         return filter3point(tex, texSmplr, uv, texSize);
     }
 @end
-    return tex.sample(texSmplr, uv);
+    return tex.sample(texSmplr, uv, bias(lodBias));
 }
 
 float random(float3 value) {
@@ -200,19 +231,51 @@ fragment FragOut fragmentShader(
                 @end
             @end
 
-            float4 texVal@{i} = hookTexture2D(uTex@{i}, uTex@{i}Smplr, vTexCoordAdj@{i}, texSize@{i}, drawUniforms.textureFiltering[@{i}]);
+            float4 texVal@{i} = hookTexture2D(uTex@{i}, uTex@{i}Smplr, vTexCoordAdj@{i}, texSize@{i}, drawUniforms.textureFiltering[@{i}], drawUniforms.lodBias);
 
             @if(o_masks[i])
                 float2 maskSize@{i} = float2(uTexMask@{i}.get_width(), uTexMask@{i}.get_height());
-                float4 maskVal@{i} = hookTexture2D(uTexMask@{i}, uTex@{i}Smplr, vTexCoordAdj@{i}, maskSize@{i}, drawUniforms.textureFiltering[@{i}]);
+                float4 maskVal@{i} = hookTexture2D(uTexMask@{i}, uTex@{i}Smplr, vTexCoordAdj@{i}, maskSize@{i}, drawUniforms.textureFiltering[@{i}], drawUniforms.lodBias);
                 @if(o_blend[i])
-                    float4 blendVal@{i} = hookTexture2D(uTexBlend@{i}, uTex@{i}Smplr, vTexCoordAdj@{i}, texSize@{i}, drawUniforms.textureFiltering[@{i}]);
+                    float4 blendVal@{i} = hookTexture2D(uTexBlend@{i}, uTex@{i}Smplr, vTexCoordAdj@{i}, texSize@{i}, drawUniforms.textureFiltering[@{i}], drawUniforms.lodBias);
                 @else
                     float4 blendVal@{i} = float4(0, 0, 0, 0);
                 @end
 
                 texVal@{i} = mix(texVal@{i}, blendVal@{i}, maskVal@{i}.w);
             @end
+        @end
+    @end
+
+    @if(o_lod_detail || o_lod_sharpen)
+        // The RDP's magnified LOD for G_TD_DETAIL/G_TD_SHARPEN: below one texel per pixel, the
+        // fraction is the texel density, floored at the prim LOD minimum (minus one for sharpen,
+        // which extrapolates). Otherwise both texels are the GPU's trilinear chain sample.
+        float lodFraction = 0.0;
+        @if(o_textures[0] && o_textures[1])
+            @if(o_lod_detail)
+                float2 lodCoord = in.texCoord1 * texSize1;
+            @else
+                float2 lodCoord = in.texCoord0 * texSize0;
+                texVal1 = uTex1.sample(uTex1Smplr, vTexCoordAdj1, level(1.0));
+            @end
+            float2 lodDx = dfdx(lodCoord);
+            float2 lodDy = dfdy(lodCoord);
+            // The RDP's own measure: the largest s or t step to a neighbouring pixel.
+            float2 lodStep = max(abs(lodDx), abs(lodDy));
+            float texelsPerPixel = max(lodStep.x, lodStep.y) * exp2(drawUniforms.lodBias);
+            if (texelsPerPixel < 1.0) {
+                lodFraction = max(texelsPerPixel, drawUniforms.primLodMin);
+                @if(o_lod_sharpen)
+                    lodFraction -= 1.0;
+                @end
+            } else {
+                @if(o_lod_detail)
+                    texVal0 = texVal1;
+                @else
+                    texVal1 = texVal0;
+                @end
+            }
         @end
     @end
     

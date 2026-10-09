@@ -76,6 +76,9 @@ static const char* p_shader_item_to_str(uint32_t item, bool with_alpha, bool onl
             case SHADER_NOISE:
                 return with_alpha ? "float4(" RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ")"
                                   : "float3(" RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ")";
+            case SHADER_LOD_FRACTION:
+                return hint_single_element ? "lodFraction"
+                                           : (with_alpha ? "float4(lodFraction)" : "float3(lodFraction)");
         }
     } else {
         switch (item) {
@@ -103,6 +106,8 @@ static const char* p_shader_item_to_str(uint32_t item, bool with_alpha, bool onl
                 return "texel.w";
             case SHADER_NOISE:
                 return RAND_NOISE;
+            case SHADER_LOD_FRACTION:
+                return "lodFraction";
         }
     }
     return "";
@@ -250,6 +255,8 @@ MTL::VertexDescriptor* gfx_metal_build_shader(std::string& result, size_t& numFl
         { "o_do_multiply", M_ARRAY(cc_features.do_multiply, bool, 2, 2) },
         { "o_color_alpha_same", M_ARRAY(cc_features.color_alpha_same, bool, 2) },
         { "o_three_point_filtering", three_point_filtering },
+        { "o_lod_detail", cc_features.opt_lod_detail },
+        { "o_lod_sharpen", cc_features.opt_lod_sharpen },
         { "get_vertex_index", (InvokeFunc)get_vertex_index },
         { "append_formula", (InvokeFunc)p_append_formula },
         { "update_floats", (InvokeFunc)update_raw_floats },

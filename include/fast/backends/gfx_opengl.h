@@ -51,6 +51,9 @@ struct ShaderProgram {
     GLint texture_width_location;
     GLint texture_height_location;
     GLint texture_filtering_location;
+    GLint texture_levels_location;
+    GLint texture_lod_bias_location;
+    GLint prim_lod_min_location;
 };
 
 /**
@@ -72,6 +75,8 @@ struct TextureInfo {
     uint16_t width;
     uint16_t height;
     uint16_t filtering;
+    uint16_t levels = 1;
+    bool linearFilter = false;
 };
 
 /**
@@ -98,7 +103,10 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     uint32_t NewTexture() override;
     void SelectTexture(int tile, uint32_t textureId) override;
     void UploadTexture(const uint8_t* rgba32Buf, uint32_t width, uint32_t height) override;
+    void UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) override;
     void SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) override;
+    void SetTextureLodBias(float bias) override;
+    void SetTexturePrimLodMin(float minLod) override;
     void SetDepthTestAndMask(bool depth_test, bool z_upd) override;
     void SetCurrentPrimDepth(float depth) override;
     void SetZmodeDecal(bool decal) override;
@@ -162,6 +170,10 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     std::vector<FramebufferOGL> mFrameBuffers;
     size_t mCurrentFrameBuffer = 0;
     float mCurrentNoiseScale = 0.0f;
+    float mTextureLodBias = 0.0f;
+    float mPrimLodMin = 0.0f;
+    // Applies the min filter for the bound texture's level count and filter mode.
+    void ApplyMinFilter(const TextureInfo& tex) const;
     FilteringMode mCurrentFilterMode = FILTER_THREE_POINT;
 
     GLint mMaxMsaaLevel = 1;

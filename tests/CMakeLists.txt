@@ -40,6 +40,9 @@ add_executable(libultraship_tests
     indy_tri4_decode_tests.cpp
     indy_ge_tex_scale_tests.cpp
     ucode_dispatch_regression_tests.cpp
+    null_backend_interpreter_tests.cpp
+    mip_chain_tests.cpp
+    texture_detail_tests.cpp
 )
 
 if(ENABLE_SCRIPTING)

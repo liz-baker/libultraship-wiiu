@@ -364,8 +364,9 @@ void GfxRenderingAPIMetal::UploadTexture(const uint8_t* rgba32_buf, uint32_t wid
     MTL::Region region = MTL::Region::Make2D(0, 0, width, height);
 
     MTL::Texture* texture = texture_data->texture;
+    bool hadMipChain = texture_data->texture != nullptr && texture_data->texture->mipmapLevelCount() != 1;
     if (texture_data->texture == nullptr || texture_data->texture->width() != width ||
-        texture_data->texture->height() != height) {
+        texture_data->texture->height() != height || hadMipChain) {
         if (texture_data->texture != nullptr)
             texture_data->texture->release();
 
@@ -376,6 +377,40 @@ void GfxRenderingAPIMetal::UploadTexture(const uint8_t* rgba32_buf, uint32_t wid
     NS::UInteger bytes_per_row = bytes_per_pixel * width;
     texture->replaceRegion(region, 0, rgba32_buf, bytes_per_row);
     texture_data->texture = texture;
+    if (hadMipChain) {
+        // Texture ids are recycled: drop the mip filtering a previous chain left on this one.
+        CreateSamplerState(texture_data);
+    }
+
+    autorelease_pool->release();
+}
+
+void GfxRenderingAPIMetal::UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) {
+    if (numLevels == 0 || levels[0].width == 0 || levels[0].height == 0) {
+        return;
+    }
+
+    TextureDataMetal* texture_data = &mTextures[mCurrentTextureIds[mCurrentTile]];
+
+    NS::AutoreleasePool* autorelease_pool = NS::AutoreleasePool::alloc()->init();
+
+    MTL::TextureDescriptor* texture_descriptor = MTL::TextureDescriptor::texture2DDescriptor(
+        MTL::PixelFormatRGBA8Unorm, levels[0].width, levels[0].height, true);
+    texture_descriptor->setArrayLength(1);
+    texture_descriptor->setMipmapLevelCount(numLevels);
+    texture_descriptor->setSampleCount(1);
+    texture_descriptor->setStorageMode(MTL::StorageModeShared);
+
+    if (texture_data->texture != nullptr) {
+        texture_data->texture->release();
+    }
+    MTL::Texture* texture = mDevice->newTexture(texture_descriptor);
+    for (uint32_t n = 0; n < numLevels; n++) {
+        MTL::Region region = MTL::Region::Make2D(0, 0, levels[n].width, levels[n].height);
+        texture->replaceRegion(region, n, levels[n].rgba32, levels[n].width * 4);
+    }
+    texture_data->texture = texture;
+    CreateSamplerState(texture_data);
 
     autorelease_pool->release();
 }
@@ -384,26 +419,47 @@ void GfxRenderingAPIMetal::SetSamplerParameters(int tile, bool linear_filter, ui
     TextureDataMetal* texture_data = &mTextures[mCurrentTextureIds[tile]];
     texture_data->linear_filtering = linear_filter;
     texture_data->filtering = !linear_filter ? FILTER_LINEAR : FILTER_THREE_POINT;
+    texture_data->cms = cms;
+    texture_data->cmt = cmt;
+    CreateSamplerState(texture_data);
+}
 
-    // This function is called twice per texture, the first one only to set default values.
-    // Maybe that could be skipped? Anyway, make sure to release the first default sampler
-    // state before setting the actual one.
+void GfxRenderingAPIMetal::CreateSamplerState(TextureDataMetal* texture_data) {
+    // SetSamplerParameters() runs twice per texture, the first time only to set default values,
+    // so release the previous sampler state before creating the new one.
     if (texture_data->sampler != nullptr) {
         texture_data->sampler->release();
     }
 
     MTL::SamplerDescriptor* sampler_descriptor = MTL::SamplerDescriptor::alloc()->init();
-    MTL::SamplerMinMagFilter filter = linear_filter && mCurrentFilterMode == FILTER_LINEAR
+    MTL::SamplerMinMagFilter filter = texture_data->linear_filtering && mCurrentFilterMode == FILTER_LINEAR
                                           ? MTL::SamplerMinMagFilterLinear
                                           : MTL::SamplerMinMagFilterNearest;
     sampler_descriptor->setMinFilter(filter);
     sampler_descriptor->setMagFilter(filter);
-    sampler_descriptor->setSAddressMode(gfx_cm_to_metal(cms));
-    sampler_descriptor->setTAddressMode(gfx_cm_to_metal(cmt));
+    // Point sampling within a level, but always blend between levels: the RDP's TRILERP.
+    bool mipmapped = texture_data->texture != nullptr && texture_data->texture->mipmapLevelCount() > 1;
+    sampler_descriptor->setMipFilter(mipmapped ? MTL::SamplerMipFilterLinear : MTL::SamplerMipFilterNotMipmapped);
+    sampler_descriptor->setSAddressMode(gfx_cm_to_metal(texture_data->cms));
+    sampler_descriptor->setTAddressMode(gfx_cm_to_metal(texture_data->cmt));
     sampler_descriptor->setRAddressMode(MTL::SamplerAddressModeRepeat);
 
     texture_data->sampler = mDevice->newSamplerState(sampler_descriptor);
     sampler_descriptor->release();
+}
+
+void GfxRenderingAPIMetal::SetTextureLodBias(float bias) {
+    if (bias != mDrawUniforms.lodBias) {
+        mDrawUniforms.lodBias = bias;
+        mLodUniformsDirty = true;
+    }
+}
+
+void GfxRenderingAPIMetal::SetTexturePrimLodMin(float minLod) {
+    if (minLod != mDrawUniforms.primLodMin) {
+        mDrawUniforms.primLodMin = minLod;
+        mLodUniformsDirty = true;
+    }
 }
 
 void GfxRenderingAPIMetal::SetDepthTestAndMask(bool depth_test, bool depth_mask) {
@@ -542,10 +598,11 @@ void GfxRenderingAPIMetal::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, si
         }
     }
 
-    if (textures_changed || mPrimDepthDirty) {
+    if (textures_changed || mPrimDepthDirty || mLodUniformsDirty) {
         mDrawUniforms.prim_depth = mCurrentPrimDepth;
         current_framebuffer.mCommandEncoder->setFragmentBytes(&mDrawUniforms, sizeof(DrawUniforms), 1);
         mPrimDepthDirty = false;
+        mLodUniformsDirty = false;
     }
 
     if (current_framebuffer.mLastShaderProgram != mShaderProgram) {

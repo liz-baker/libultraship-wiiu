@@ -13,6 +13,7 @@
 #include <malloc.h>
 #include <cassert>
 #include <algorithm>
+#include <cmath>
 #include <bit>
 #include <iterator>
 
@@ -113,6 +114,15 @@ void GfxRenderingAPIGX2::SetUniforms(ShaderProgram* prg) {
     float window_params_array[4] = { mNoiseScale, (float)mFrameCount, 0.0f, 0.0f };
 
     GX2SetPixelUniformReg(prg->window_params_offset, 4, window_params_array);
+    SetLodUniforms(prg);
+}
+
+void GfxRenderingAPIGX2::SetLodUniforms(ShaderProgram* prg) {
+    if (prg->lod_params_offset < 0) {
+        return;
+    }
+    float lod_params_array[4] = { mPrimLodMin, std::exp2(mTextureLodBias), 0.0f, 0.0f };
+    GX2SetPixelUniformReg(prg->lod_params_offset, 4, lod_params_array);
 }
 
 void GfxRenderingAPIGX2::UnloadShader(ShaderProgram* old_prg) {
@@ -154,6 +164,7 @@ ShaderProgram* GfxRenderingAPIGX2::CreateAndLoadNewShader(uint64_t shader_id0, u
     LoadShader(prg);
 
     prg->window_params_offset = GX2GetPixelUniformVarOffset(&prg->group.pixelShader, "window_params");
+    prg->lod_params_offset = GX2GetPixelUniformVarOffset(&prg->group.pixelShader, "lod_params");
     prg->samplers_location[0] = GX2GetPixelSamplerVarLocation(&prg->group.pixelShader, "uTex0");
     prg->samplers_location[1] = GX2GetPixelSamplerVarLocation(&prg->group.pixelShader, "uTex1");
     prg->samplers_location[2] = GX2GetPixelSamplerVarLocation(&prg->group.pixelShader, "uTexMask0");
@@ -210,6 +221,9 @@ void GfxRenderingAPIGX2::DeleteTexture(uint32_t texture_id) {
 }
 
 void GfxRenderingAPIGX2::BindTextureSlot(int tile, Texture* tex) {
+    if (tex->sampler_set && tex->texture.surface.mipLevels > 1 && tex->lod_bias != mTextureLodBias) {
+        InitTextureSampler(tex);
+    }
     if (mCurrentShaderProgram) {
         int32_t sampler_location = mCurrentShaderProgram->samplers_location[tile];
         if (sampler_location != -1) {
@@ -237,8 +251,10 @@ void GfxRenderingAPIGX2::UploadTexture(const uint8_t* rgba32_buf, uint32_t width
     Texture* tex = mCurrentTexture;
     assert(tex);
 
+    // Texture ids are recycled: a previous mip chain on this one needs a single-level surface.
+    bool hadMipChain = tex->texture.surface.mipLevels > 1;
     if ((tex->texture.surface.width != width) || (tex->texture.surface.height != height) ||
-        !tex->texture.surface.image) {
+        !tex->texture.surface.image || hadMipChain) {
 
         if (tex->texture.surface.image) {
             free(tex->texture.surface.image);
@@ -276,6 +292,10 @@ void GfxRenderingAPIGX2::UploadTexture(const uint8_t* rgba32_buf, uint32_t width
 
     GX2Invalidate(GX2_INVALIDATE_MODE_CPU_TEXTURE, tex->texture.surface.image, tex->texture.surface.imageSize);
 
+    if (hadMipChain && tex->sampler_set) {
+        InitTextureSampler(tex);
+    }
+
     if (mCurrentShaderProgram && mCurrentShaderProgram->samplers_location[mCurrentTile] != -1) {
         GX2SetPixelTexture(&tex->texture, mCurrentShaderProgram->samplers_location[mCurrentTile]);
     }
@@ -304,17 +324,125 @@ void GfxRenderingAPIGX2::SetSamplerParameters(int tile, bool linear_filter, uint
 
     mCurrentTile = tile;
 
-    GX2InitSampler(&tex->sampler, GX2_TEX_CLAMP_MODE_CLAMP,
-                   (linear_filter && mFilterMode == FILTER_LINEAR) ? GX2_TEX_XY_FILTER_MODE_LINEAR
-                                                                   : GX2_TEX_XY_FILTER_MODE_POINT);
-
-    GX2InitSamplerClamping(&tex->sampler, gfx_cm_to_gx2(cms), gfx_cm_to_gx2(cmt), GX2_TEX_CLAMP_MODE_WRAP);
+    tex->linear_filter = linear_filter;
+    tex->cms = cms;
+    tex->cmt = cmt;
+    InitTextureSampler(tex);
 
     if (mCurrentShaderProgram && mCurrentShaderProgram->samplers_location[tile] != -1) {
         GX2SetPixelSampler(&tex->sampler, mCurrentShaderProgram->samplers_location[tile]);
     }
 
     tex->sampler_set = true;
+}
+
+void GfxRenderingAPIGX2::InitTextureSampler(Texture* tex) {
+    GX2InitSampler(&tex->sampler, GX2_TEX_CLAMP_MODE_CLAMP,
+                   (tex->linear_filter && mFilterMode == FILTER_LINEAR) ? GX2_TEX_XY_FILTER_MODE_LINEAR
+                                                                        : GX2_TEX_XY_FILTER_MODE_POINT);
+
+    GX2InitSamplerClamping(&tex->sampler, gfx_cm_to_gx2(tex->cms), gfx_cm_to_gx2(tex->cmt), GX2_TEX_CLAMP_MODE_WRAP);
+
+    if (tex->texture.surface.mipLevels > 1) {
+        // Point sampling within a level, but always blend between levels: the RDP's TRILERP.
+        GX2InitSamplerZMFilter(&tex->sampler, GX2_TEX_Z_FILTER_MODE_NONE, GX2_TEX_MIP_FILTER_MODE_LINEAR);
+        GX2InitSamplerLOD(&tex->sampler, 0.0f, (float)(tex->texture.surface.mipLevels - 1), mTextureLodBias);
+        tex->lod_bias = mTextureLodBias;
+    }
+}
+
+void GfxRenderingAPIGX2::UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) {
+    Texture* tex = mCurrentTexture;
+    assert(tex);
+    if (numLevels == 0 || levels[0].width == 0 || levels[0].height == 0) {
+        return;
+    }
+
+    if (tex->texture.surface.image) {
+        free(tex->texture.surface.image);
+        tex->texture.surface.image = nullptr;
+    }
+
+    memset(&tex->texture, 0, sizeof(GX2Texture));
+    GX2Surface& surface = tex->texture.surface;
+    surface.use = GX2_SURFACE_USE_TEXTURE;
+    surface.dim = GX2_SURFACE_DIM_TEXTURE_2D;
+    surface.width = levels[0].width;
+    surface.height = levels[0].height;
+    surface.depth = 1;
+    surface.mipLevels = numLevels;
+    surface.format = GX2_SURFACE_FORMAT_UNORM_R8_G8_B8_A8;
+    surface.aa = GX2_AA_MODE1X;
+    surface.tileMode = GX2_TILE_MODE_LINEAR_ALIGNED;
+    tex->texture.viewFirstMip = 0;
+    tex->texture.viewNumMips = numLevels;
+    tex->texture.viewFirstSlice = 0;
+    tex->texture.viewNumSlices = 1;
+    tex->texture.compMap = GX2_COMP_MAP(GX2_SQ_SEL_R, GX2_SQ_SEL_G, GX2_SQ_SEL_B, GX2_SQ_SEL_A);
+
+    GX2CalcSurfaceSizeAndAlignment(&surface);
+    GX2InitTextureRegs(&tex->texture);
+
+    // One allocation: level 0 at `image`, the rest from `mipmaps`, which free(image) releases with it.
+    uint32_t mipmapsOffset = (surface.imageSize + surface.alignment - 1) & ~(surface.alignment - 1);
+    uint8_t* image = (uint8_t*)memalign(surface.alignment, mipmapsOffset + surface.mipmapSize);
+    assert(image);
+    surface.image = image;
+    surface.mipmaps = image + mipmapsOffset;
+
+    for (uint32_t n = 0; n < numLevels; n++) {
+        // Level 0 lives at `image`, level 1 at `mipmaps`, and level n > 1 at mipLevelOffset[n - 1]
+        // past `mipmaps`.
+        uint8_t* dst = n == 0   ? image
+                       : n == 1 ? (uint8_t*)surface.mipmaps
+                                : (uint8_t*)surface.mipmaps + surface.mipLevelOffset[n - 1];
+        // A linear-aligned level's rows are padded the same as a standalone surface of its size.
+        GX2Surface levelSurface = surface;
+        levelSurface.width = levels[n].width;
+        levelSurface.height = levels[n].height;
+        levelSurface.mipLevels = 1;
+        GX2CalcSurfaceSizeAndAlignment(&levelSurface);
+        for (uint32_t y = 0; y < levels[n].height; ++y) {
+            memcpy(dst + y * levelSurface.pitch * 4, levels[n].rgba32 + y * levels[n].width * 4, levels[n].width * 4);
+        }
+    }
+
+    GX2Invalidate(GX2_INVALIDATE_MODE_CPU_TEXTURE, image, mipmapsOffset + surface.mipmapSize);
+
+    if (mCurrentShaderProgram && mCurrentShaderProgram->samplers_location[mCurrentTile] != -1) {
+        GX2SetPixelTexture(&tex->texture, mCurrentShaderProgram->samplers_location[mCurrentTile]);
+    }
+    tex->texture_uploaded = true;
+
+    if (tex->sampler_set) {
+        InitTextureSampler(tex);
+        if (mCurrentShaderProgram && mCurrentShaderProgram->samplers_location[mCurrentTile] != -1) {
+            GX2SetPixelSampler(&tex->sampler, mCurrentShaderProgram->samplers_location[mCurrentTile]);
+        }
+    }
+}
+
+void GfxRenderingAPIGX2::SetTexturePrimLodMin(float minLod) {
+    mPrimLodMin = minLod;
+    if (mCurrentShaderProgram) {
+        SetLodUniforms(mCurrentShaderProgram);
+    }
+}
+
+void GfxRenderingAPIGX2::SetTextureLodBias(float bias) {
+    if (bias == mTextureLodBias) {
+        return;
+    }
+    mTextureLodBias = bias;
+    if (mCurrentShaderProgram) {
+        SetLodUniforms(mCurrentShaderProgram);
+    }
+    // Rebuilds the bound mip chains' samplers with the new bias.
+    for (int tile = 0; tile < SHADER_MAX_TEXTURES; tile++) {
+        if (mBoundTextures[tile] != nullptr) {
+            BindTextureSlot(tile, mBoundTextures[tile]);
+        }
+    }
 }
 
 void GfxRenderingAPIGX2::SetDepthTestAndMask(bool depth_test, bool z_upd) {

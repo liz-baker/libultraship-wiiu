@@ -66,6 +66,8 @@ float4 grayscale : GRAYSCALE;
 cbuffer PerFrameCB : register(b0) {
     uint noise_frame;
     float noise_scale;
+    float lod_bias;
+    float prim_lod_min;
 }
 
 float random(in float3 value) {
@@ -95,6 +97,37 @@ float4 tex2D3PointFilter(in Texture2D tex, in SamplerState tSampler, in float2 t
     float4 c1 = TEX_OFFSET(tex, tSampler, texCoord, float2(offset.x - sign(offset.x), offset.y), texSize);
     float4 c2 = TEX_OFFSET(tex, tSampler, texCoord, float2(offset.x, offset.y - sign(offset.y)), texSize);
     return c0 + abs(offset.x)*(c1-c0) + abs(offset.y)*(c2-c0);
+}
+
+// tex2D3PointFilter() at one level of a mip chain.
+float4 tex2D3PointFilterLevel(in Texture2D tex, in SamplerState tSampler, in float2 texCoord, in float2 texSize, in float level) {
+    float2 levelSize = max(floor(texSize / exp2(level)), float2(1.0, 1.0));
+    float2 offset = frac(texCoord * levelSize - float2(0.5, 0.5));
+    offset -= step(1.0, offset.x + offset.y);
+    float4 c0 = tex.SampleLevel(tSampler, texCoord - offset / levelSize, level);
+    float4 c1 = tex.SampleLevel(tSampler, texCoord - float2(offset.x - sign(offset.x), offset.y) / levelSize, level);
+    float4 c2 = tex.SampleLevel(tSampler, texCoord - float2(offset.x, offset.y - sign(offset.y)) / levelSize, level);
+    return c0 + abs(offset.x)*(c1-c0) + abs(offset.y)*(c2-c0);
+}
+
+// tex2D3PointFilter(), or for a mip chain the RDP's TRILERP over 3-point filtered levels: pick the
+// level from the texel footprint the way the GPU would, then blend the two levels either side of it.
+float4 tex2D3PointFilterMip(in Texture2D tex, in SamplerState tSampler, in float2 texCoord, in float2 texSize) {
+    float2 dx = ddx(texCoord * texSize);
+    float2 dy = ddy(texCoord * texSize);
+    uint width, height, levels;
+    tex.GetDimensions(0, width, height, levels);
+    if (levels <= 1) {
+        return tex2D3PointFilter(tex, tSampler, texCoord, texSize);
+    }
+    float lod = 0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1e-8)) + lod_bias;
+    lod = clamp(lod, 0.0, float(levels - 1));
+    float level0 = floor(lod);
+    float4 c = tex2D3PointFilterLevel(tex, tSampler, texCoord, texSize, level0);
+    if (lod > level0) {
+        c = lerp(c, tex2D3PointFilterLevel(tex, tSampler, texCoord, texSize, level0 + 1.0), lod - level0);
+    }
+    return c;
 }
 @end
 
@@ -216,7 +249,7 @@ PSOutput PSMain(PSInput input, float4 screenSpace : SV_Position) {
                 float4 texVal@{i};
                 if (textures[@{i}].linear_filtering) {
                     @if(o_masks[i])
-                        texVal@{i} = tex2D3PointFilter(g_texture@{i}, g_sampler@{i}, tc@{i}, float2(textures[@{i}].width, textures[@{i}].height));
+                        texVal@{i} = tex2D3PointFilterMip(g_texture@{i}, g_sampler@{i}, tc@{i}, float2(textures[@{i}].width, textures[@{i}].height));
                         float2 maskSize@{i};
                         g_textureMask@{i}.GetDimensions(maskSize@{i}.x, maskSize@{i}.y);
                         float4 maskVal@{i} = tex2D3PointFilter(g_textureMask@{i}, g_sampler@{i}, tc@{i}, maskSize@{i});
@@ -228,10 +261,10 @@ PSOutput PSMain(PSInput input, float4 screenSpace : SV_Position) {
 
                         texVal@{i} = lerp(texVal@{i}, blendVal@{i}, maskVal@{i}.a);
                     @else
-                        texVal@{i} = tex2D3PointFilter(g_texture@{i}, g_sampler@{i}, tc@{i}, float2(textures[@{i}].width, textures[@{i}].height));
+                        texVal@{i} = tex2D3PointFilterMip(g_texture@{i}, g_sampler@{i}, tc@{i}, float2(textures[@{i}].width, textures[@{i}].height));
                     @end
                 } else {
-                    texVal@{i} = g_texture@{i}.Sample(g_sampler@{i}, tc@{i});
+                    texVal@{i} = g_texture@{i}.SampleBias(g_sampler@{i}, tc@{i}, lod_bias);
                     @if(o_masks[i])
                         @if(o_blend[i])
                             float4 blendVal@{i} = g_textureBlend@{i}.Sample(g_sampler@{i}, tc@{i});
@@ -242,7 +275,7 @@ PSOutput PSMain(PSInput input, float4 screenSpace : SV_Position) {
                     @end
                 }
             @else
-                float4 texVal@{i} = g_texture@{i}.Sample(g_sampler@{i}, tc@{i});
+                float4 texVal@{i} = g_texture@{i}.SampleBias(g_sampler@{i}, tc@{i}, lod_bias);
                 @if(o_masks[i])
                     @if(o_blend[i])
                         float4 blendVal@{i} = g_textureBlend@{i}.Sample(g_sampler@{i}, tc@{i});
@@ -252,6 +285,41 @@ PSOutput PSMain(PSInput input, float4 screenSpace : SV_Position) {
                     texVal@{i} = lerp(texVal@{i}, blendVal@{i}, g_textureMask@{i}.Sample(g_sampler@{i}, tc@{i}).a);
                 @end
             @end
+        @end
+    @end
+
+    @if(o_lod_detail || o_lod_sharpen)
+        // The RDP's magnified LOD for G_TD_DETAIL/G_TD_SHARPEN: below one texel per pixel, the
+        // fraction is the texel density, floored at the prim LOD minimum (minus one for sharpen,
+        // which extrapolates). Otherwise both texels are the GPU's trilinear chain sample.
+        float lodFraction = 0.0;
+        @if(o_textures[0] && o_textures[1])
+            float2 lodTexSize;
+            @if(o_lod_detail)
+                g_texture1.GetDimensions(lodTexSize.x, lodTexSize.y);
+                float2 lodCoord = input.uv1 * lodTexSize;
+            @else
+                g_texture0.GetDimensions(lodTexSize.x, lodTexSize.y);
+                float2 lodCoord = input.uv0 * lodTexSize;
+                texVal1 = g_texture1.SampleLevel(g_sampler1, tc1, 1.0);
+            @end
+            float2 lodDx = ddx(lodCoord);
+            float2 lodDy = ddy(lodCoord);
+            // The RDP's own measure: the largest s or t step to a neighbouring pixel.
+            float2 lodStep = max(abs(lodDx), abs(lodDy));
+            float texelsPerPixel = max(lodStep.x, lodStep.y) * exp2(lod_bias);
+            if (texelsPerPixel < 1.0) {
+                lodFraction = max(texelsPerPixel, prim_lod_min);
+                @if(o_lod_sharpen)
+                    lodFraction -= 1.0;
+                @end
+            } else {
+                @if(o_lod_detail)
+                    texVal0 = texVal1;
+                @else
+                    texVal1 = texVal0;
+                @end
+            }
         @end
     @end
 

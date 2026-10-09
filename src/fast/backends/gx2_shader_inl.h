@@ -269,6 +269,7 @@
 #define TEX_INST_GET_GRADIENTS_H 0x07
 #define TEX_INST_GET_GRADIENTS_V 0x08
 #define TEX_INST_SAMPLE 0x10
+#define TEX_INST_SAMPLE_L 0x11
 /* VTX */
 #define VTX_INST_FETCH 0x0
 
@@ -611,6 +612,14 @@
              TEX_WORD1(dstReg, 0x0, dstSelX, dstSelY, dstSelZ, dstSelW, 0x0, TEX_NORMALIZED, TEX_NORMALIZED,           \
                        TEX_NORMALIZED, TEX_NORMALIZED)),                                                               \
         to_QWORD(TEX_WORD2(0x0, 0x0, 0x0, samplerID, _x, _y, _0, _x), 0x00000000)
+
+/* SAMPLE_L takes the level of detail from the source's W selection */
+#define TEX_SAMPLE_L(dstReg, dstSelX, dstSelY, dstSelZ, dstSelW, srcReg, srcSelX, srcSelY, srcSelZ, srcSelW, \
+                     resourceID, samplerID)                                                                  \
+    to_QWORD(TEX_WORD0(TEX_INST_SAMPLE_L, 0x0, 0x0, resourceID, srcReg, 0x0, 0x0),                           \
+             TEX_WORD1(dstReg, 0x0, dstSelX, dstSelY, dstSelZ, dstSelW, 0x0, TEX_NORMALIZED, TEX_NORMALIZED, \
+                       TEX_NORMALIZED, TEX_NORMALIZED)),                                                     \
+        to_QWORD(TEX_WORD2(0x0, 0x0, 0x0, samplerID, srcSelX, srcSelY, srcSelZ, srcSelW), 0x00000000)
 
 #define TEX_GET_GRADIENTS_H(dstReg, dstSelX, dstSelY, dstSelZ, dstSelW, srcReg, srcSelX, srcSelY, srcSelZ, srcSelW, \
                             resourceID, samplerID)                                                                  \

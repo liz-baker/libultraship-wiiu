@@ -64,7 +64,10 @@ enum {
     SHADER_TEXEL1A,
     SHADER_1,
     SHADER_COMBINED,
-    SHADER_NOISE
+    SHADER_NOISE,
+    // Per-pixel LOD_FRACTION for detail/sharpen textures (ShaderOpts::TEX_DETAIL/TEX_SHARPEN).
+    // Combiner items are 4 bits, so this is the last one that fits.
+    SHADER_LOD_FRACTION
 };
 
 #ifdef __cplusplus
@@ -86,6 +89,10 @@ enum class ShaderOpts {
     TEXEL0_BLEND,
     TEXEL1_BLEND,
     PRIM_DEPTH,
+    // G_TD_DETAIL / G_TD_SHARPEN: the shader computes LOD_FRACTION per pixel and swaps texels by
+    // magnification (issue #79).
+    TEX_DETAIL,
+    TEX_SHARPEN,
     PRISM_SHADER, // 16-bit width
     MAX
 };
@@ -119,6 +126,8 @@ struct CCFeatures {
     bool opt_invisible;
     bool opt_grayscale;
     bool opt_prim_depth;
+    bool opt_lod_detail;
+    bool opt_lod_sharpen;
     bool usedTextures[2];
     bool used_masks[2];
     bool used_blend[2];
@@ -142,8 +151,8 @@ class GfxWindowBackend;
 class Fast3dWindow;
 
 constexpr size_t MAX_SEGMENT_POINTERS = 16;
-constexpr size_t SHADER_ID_SHIFT = 17;
-constexpr int16_t ShaderIdUnmask(int id) {
+constexpr size_t SHADER_ID_SHIFT = static_cast<size_t>(ShaderOpts::PRISM_SHADER);
+constexpr int16_t ShaderIdUnmask(uint64_t id) {
     return (id >> SHADER_ID_SHIFT) & 0xFFFF;
 }
 
@@ -191,6 +200,8 @@ struct TextureCacheKey {
     uint8_t fmt, siz;
     uint8_t palette_index;
     uint32_t size_bytes;
+    // Levels uploaded for a G_TL_LOD mip chain (see ResolveMipChain); 0 for a single-level texture.
+    uint8_t mip_levels;
 
     bool operator==(const TextureCacheKey&) const noexcept = default;
 
@@ -326,6 +337,10 @@ struct RDP {
     } texture_tile[8];
     bool textures_changed[2];
 
+    // G_TEXTURE's level argument: the highest LOD tile offset from first_tile_index the RDP may
+    // select, so a mip chain spans tiles first_tile_index..first_tile_index + texture_max_level.
+    uint8_t texture_max_level;
+
     // Stamped into loaded_texture[].load_seq by each G_LOADBLOCK/G_LOADTILE; see its comment.
     uint32_t next_load_seq;
 
@@ -336,6 +351,9 @@ struct RDP {
     bool grayscale;
 
     uint8_t prim_lod_fraction;
+    // G_SETPRIMCOLOR's minimum LOD level, in 1/32 texel units: the floor of a detail or sharpen
+    // texture's LOD_FRACTION when magnified.
+    uint8_t prim_lod_min;
     uint16_t prim_depth;
     struct RGBA env_color, prim_color, fog_color, blend_color, fill_color, grayscale_color;
 
@@ -385,6 +403,11 @@ struct RenderingState {
     struct XYWidthHeight viewport, scissor;
     struct ShaderProgram* mShaderProgram;
     TextureCacheNode* mTextures[SHADER_MAX_TEXTURES];
+    // Mip levels of the texture bound to each sampled slot, so a draw that switches between a mip
+    // chain and a single level of the same tiles re-imports instead of reusing the other binding.
+    uint8_t mip_levels[2];
+    // Last value handed to GfxRenderingAPI::SetTexturePrimLodMin(); negative until the first one.
+    float prim_lod_min = -1.0f;
 };
 
 struct FBInfo {
@@ -398,6 +421,21 @@ struct FBInfo {
 struct MaskedTextureEntry {
     uint8_t* mask;
     uint8_t* replacementData;
+};
+
+// One level of a G_TL_LOD mip chain: the render tile holding it and its size in texels.
+struct MipChainLevel {
+    uint8_t tile;
+    uint32_t width, height;
+};
+
+// The RDP's tile field is 3 bits, so a chain can't span more than the 8 tiles.
+constexpr uint8_t MAX_MIP_CHAIN_LEVELS = 8;
+
+struct MipChain {
+    // Fewer than 2 means there is no usable chain and the base tile is sampled alone.
+    uint8_t numLevels = 0;
+    MipChainLevel levels[MAX_MIP_CHAIN_LEVELS];
 };
 
 class Interpreter {
@@ -473,7 +511,10 @@ class Interpreter {
     void ImportTextureCi8(int tile, bool importReplacement);
     void ImportTextureRaw(int tile, bool importReplacement);
     void ImportTextureImg(int tile, bool importReplacement);
-    void ImportTexture(int i, int tile, bool importReplacement);
+    void ImportTexture(int i, int tile, bool importReplacement, const MipChain* mipChain = nullptr);
+    void ImportMipChain(const MipChain& chain);
+    // Whether a tile's texels can be imported as a mip chain rather than through the single-level path.
+    bool CanImportMipChain(int tile) const;
     void ImportTextureMask(int i, int tile);
     void CalculateNormalDir(const F3DLight_t*, float coeffs[3]);
 
@@ -535,6 +576,9 @@ class Interpreter {
 
     void SpReset();
     void* SegAddr(uintptr_t w1);
+    // Every game-content StartDrawToFramebuffer goes through here so the texture LOD bias follows the
+    // render target's scale over native resolution.
+    void StartDrawToFramebuffer(int fbId, float resolutionScale);
 
     static const char* CCMUXtoStr(uint32_t ccmux);
     static const char* ACMUXtoStr(uint32_t acmux);
@@ -554,6 +598,7 @@ class Interpreter {
     std::map<ColorCombinerKey, ColorCombiner> mColorCombinerPool; // color_combiner_pool;
     std::map<ColorCombinerKey, ColorCombiner>::iterator mPrevCombiner = mColorCombinerPool.end();
     uint8_t* mTexUploadBuffer = nullptr;
+    std::vector<uint8_t> mMipChainUploadBuffer;
 
     GfxDimensions mGfxCurrentWindowDimensions{}; // gfx_current_window_dimensions;
     int32_t mCurWindowPosX{};
@@ -625,6 +670,18 @@ bool IsIndyTri4TriangleDrawn(const std::array<uint8_t, 3>& triangle);
 // G_TP_NONE (see issue #73). Pure so it is unit-testable without an Interpreter instance.
 // `w` is the vertex's clip-space w and `perspNorm` the raw G_MW_PERSPNORM word.
 float IndyGeNonPerspectiveTexScale(float w, uint16_t perspNorm);
+
+// Collects the mip chain the RDP would select from for a draw whose G_TEXTURE named `baseTile`
+// and `maxLevel` (issue #77): level n lives in tile baseTile + n at its own TMEM address. The
+// chain ends at the first tile that isn't the same format at half the previous level's size, or
+// whose data doesn't fit in the block it was loaded with. Pure over RDP state so it is
+// unit-testable without an Interpreter instance.
+MipChain ResolveMipChain(const RDP& rdp, uint8_t baseTile, uint8_t maxLevel);
+
+// LOD bias that makes the GPU pick the same mip level the RDP would at native resolution, when
+// rendering at `resolutionScale` times native. Never negative: below native, keep the GPU's own
+// choice rather than sharpening past what the RDP would show.
+float TextureLodBiasForScale(float resolutionScale);
 
 } // namespace Fast
 
