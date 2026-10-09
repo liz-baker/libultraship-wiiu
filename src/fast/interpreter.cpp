@@ -1081,6 +1081,9 @@ void Interpreter::ImportTextureIA8(int tile, bool importReplacement) {
         fullImageLineSizeBytes = width;
     }
 
+    // A block can hold more than the tile: a mip chain's lower levels follow its base level.
+    TrimImportToTile(mRdp, tile, metadata->h_byte_scale != 1 || metadata->v_pixel_scale != 1, &width, &height);
+
     uint32_t i = 0;
     for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x++) {
@@ -1124,6 +1127,9 @@ void Interpreter::ImportTextureIA16(int tile, bool importReplacement) {
     if (full_image_line_size_bytes == size_bytes) {
         full_image_line_size_bytes = width * 2;
     }
+
+    // A block can hold more than the tile: a mip chain's lower levels follow its base level.
+    TrimImportToTile(mRdp, tile, metadata->h_byte_scale != 1 || metadata->v_pixel_scale != 1, &width, &height);
 
     uint32_t i = 0;
 
@@ -1227,6 +1233,9 @@ void Interpreter::ImportTextureI8(int tile, bool importReplacement) {
     if (fullImageLineSizeBytes == sizeBytes) {
         fullImageLineSizeBytes = width;
     }
+
+    // A block can hold more than the tile: a mip chain's lower levels follow its base level.
+    TrimImportToTile(mRdp, tile, metadata->h_byte_scale != 1 || metadata->v_pixel_scale != 1, &width, &height);
 
     uint32_t i = 0;
     for (uint32_t y = 0; y < height; y++) {
