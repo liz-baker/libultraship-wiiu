@@ -1,3 +1,4 @@
+#include <cstring>
 #define NOMINMAX
 
 #include <math.h>
@@ -1401,6 +1402,14 @@ void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
     }
     if ((isHd || pyramidLike || clampT) && tile_h > 0 && tile_h < height) {
         height = tile_h;
+    }
+
+    // The conversion above laid its rows baseLineSizeBytes apart. A width trimmed below that (a
+    // padded row, such as a 33 texel image's 40 bytes) needs each row moved up to the new width.
+    if (!isHd && width < baseLineSizeBytes) {
+        for (uint32_t y = 1; y < height; y++) {
+            memmove(&mTexUploadBuffer[4 * y * width], &mTexUploadBuffer[4 * y * baseLineSizeBytes], 4 * width);
+        }
     }
 
     mRapi->UploadTexture(mTexUploadBuffer, width, height);
