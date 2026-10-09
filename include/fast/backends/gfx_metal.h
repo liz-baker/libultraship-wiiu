@@ -95,6 +95,8 @@ struct TextureDataMetal {
     uint32_t height;
     uint32_t filtering;
     bool linear_filtering;
+    // Last SetSamplerParameters() wrap modes, so the sampler can be rebuilt when the level count changes.
+    uint32_t cms, cmt;
 };
 
 /**
@@ -141,6 +143,7 @@ struct FrameUniforms {
 /** @brief Per-draw uniforms consumed by Metal shader programs. */
 struct DrawUniforms {
     simd::int1 textureFiltering[SHADER_MAX_TEXTURES];
+    simd::float1 lodBias;
     simd::float1 prim_depth;
 };
 
@@ -171,7 +174,14 @@ class GfxRenderingAPIMetal final : public GfxRenderingAPI {
     uint32_t NewTexture() override;
     void SelectTexture(int tile, uint32_t textureId) override;
     void UploadTexture(const uint8_t* rgba32Buf, uint32_t width, uint32_t height) override;
+    void UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) override;
     void SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) override;
+    void SetTextureLodBias(float bias) override;
+
+  private:
+    void CreateSamplerState(TextureDataMetal* textureData);
+
+  public:
     void SetDepthTestAndMask(bool depth_test, bool z_upd) override;
     void SetCurrentPrimDepth(float depth) override;
     void SetZmodeDecal(bool decal) override;
@@ -234,6 +244,7 @@ class GfxRenderingAPIMetal final : public GfxRenderingAPI {
     FrameUniforms mFrameUniforms;
     CoordUniforms mCoordUniforms;
     DrawUniforms mDrawUniforms;
+    bool mLodBiasDirty = true;
     MTL::Buffer* mFrameUniformBuffer;
 
     uint32_t mMsaaNumQualityLevels[METAL_MAX_MULTISAMPLE_SAMPLE_COUNT];

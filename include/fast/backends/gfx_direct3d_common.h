@@ -23,7 +23,8 @@ namespace Fast {
 struct PerFrameCB {
     uint32_t noise_frame;
     float noise_scale;
-    uint32_t padding[2]; // constant buffers must be multiples of 16 bytes in size
+    float lod_bias;
+    uint32_t padding; // constant buffers must be multiples of 16 bytes in size
 };
 
 /**
@@ -63,6 +64,9 @@ struct TextureData {
     uint32_t width;
     uint32_t height;
     bool linear_filtering;
+    uint32_t levels = 1;
+    // Last SetSamplerParameters() arguments, so the sampler can be rebuilt when the level count changes.
+    uint32_t cms = 0, cmt = 0;
 };
 
 /**
@@ -128,7 +132,14 @@ class GfxRenderingAPIDX11 final : public GfxRenderingAPI {
     uint32_t NewTexture() override;
     void SelectTexture(int tile, uint32_t textureId) override;
     void UploadTexture(const uint8_t* rgba32Buf, uint32_t width, uint32_t height) override;
+    void UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) override;
     void SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) override;
+    void SetTextureLodBias(float bias) override;
+
+  private:
+    void CreateSamplerState(TextureData* textureData);
+
+  public:
     void SetDepthTestAndMask(bool depth_test, bool z_upd) override;
     void SetCurrentPrimDepth(float depth) override;
     void SetZmodeDecal(bool decal) override;

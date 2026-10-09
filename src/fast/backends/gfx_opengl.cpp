@@ -78,17 +78,21 @@ void GfxRenderingAPIOGL::SetPerDrawUniforms() {
         GLint filtering[2] = { FILTER_NONE, FILTER_NONE };
         GLint width[2] = { 1, 1 };
         GLint height[2] = { 1, 1 };
+        GLint levels[2] = { 1, 1 };
         // The shader's per-draw uniforms only cover the first two texture slots.
         for (int i = 0; i < 2; i++) {
             if (mCurrentTextureIds[i] < textures.size()) {
                 filtering[i] = textures[mCurrentTextureIds[i]].filtering;
                 width[i] = textures[mCurrentTextureIds[i]].width;
                 height[i] = textures[mCurrentTextureIds[i]].height;
+                levels[i] = textures[mCurrentTextureIds[i]].levels;
             }
         }
         glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
         glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
         glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
+        glUniform1iv(mCurrentShaderProgram->texture_levels_location, 2, levels);
+        glUniform1f(mCurrentShaderProgram->texture_lod_bias_location, mTextureLodBias);
     }
 }
 
@@ -521,6 +525,8 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
     prg->texture_width_location = glGetUniformLocation(shader_program, "texture_width");
     prg->texture_height_location = glGetUniformLocation(shader_program, "texture_height");
     prg->texture_filtering_location = glGetUniformLocation(shader_program, "texture_filtering");
+    prg->texture_levels_location = glGetUniformLocation(shader_program, "texture_levels");
+    prg->texture_lod_bias_location = glGetUniformLocation(shader_program, "texture_lod_bias");
 
     LoadShader(prg);
 
@@ -592,8 +598,46 @@ void GfxRenderingAPIOGL::UploadTexture(const uint8_t* rgba32_buf, uint32_t width
         return;
     }
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba32_buf);
-    textures[mCurrentTextureIds[mCurrentTile]].width = width;
-    textures[mCurrentTextureIds[mCurrentTile]].height = height;
+    TextureInfo& tex = textures[mCurrentTextureIds[mCurrentTile]];
+    tex.width = width;
+    tex.height = height;
+    if (tex.levels != 1) {
+        // Texture ids are recycled: drop the levels a previous mip chain left on this one.
+        tex.levels = 1;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        ApplyMinFilter(tex);
+    }
+}
+
+void GfxRenderingAPIOGL::UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) {
+    if (numLevels == 0 || levels[0].width == 0 || levels[0].height == 0) {
+        return;
+    }
+    for (uint32_t n = 0; n < numLevels; n++) {
+        glTexImage2D(GL_TEXTURE_2D, n, GL_RGBA8, levels[n].width, levels[n].height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     levels[n].rgba32);
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, numLevels - 1);
+    TextureInfo& tex = textures[mCurrentTextureIds[mCurrentTile]];
+    tex.width = levels[0].width;
+    tex.height = levels[0].height;
+    tex.levels = numLevels;
+    ApplyMinFilter(tex);
+}
+
+void GfxRenderingAPIOGL::ApplyMinFilter(const TextureInfo& tex) const {
+    const bool linear = tex.linearFilter && mCurrentFilterMode == FILTER_LINEAR;
+    GLint filter = linear ? GL_LINEAR : GL_NEAREST;
+    if (tex.levels > 1) {
+        // Point sampling within a level, but always blend between levels: the RDP's TRILERP.
+        filter = linear ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR;
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+}
+
+void GfxRenderingAPIOGL::SetTextureLodBias(float bias) {
+    mTextureLodBias = bias;
 }
 
 #ifdef USE_OPENGLES
@@ -620,9 +664,11 @@ void GfxRenderingAPIOGL::SetSamplerParameters(int tile, bool linear_filter, uint
         glActiveTexture(GL_TEXTURE0 + tile);
     }
     const GLint filter = linear_filter && mCurrentFilterMode == FILTER_LINEAR ? GL_LINEAR : GL_NEAREST;
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+    TextureInfo& tex = textures[mCurrentTextureIds[tile]];
+    tex.linearFilter = linear_filter;
+    ApplyMinFilter(tex);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
-    textures[mCurrentTextureIds[tile]].filtering = !linear_filter ? FILTER_LINEAR : FILTER_THREE_POINT;
+    tex.filtering = !linear_filter ? FILTER_LINEAR : FILTER_THREE_POINT;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gfx_cm_to_opengl(cms));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gfx_cm_to_opengl(cmt));
 }

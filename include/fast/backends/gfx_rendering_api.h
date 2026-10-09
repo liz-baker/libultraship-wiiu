@@ -16,6 +16,12 @@ struct GfxClipParameters {
 
 enum FilteringMode { FILTER_THREE_POINT, FILTER_LINEAR, FILTER_NONE };
 
+// One level of a mip chain handed to UploadTextureMipChain(), as tightly packed RGBA8.
+struct TextureMipLevel {
+    const uint8_t* rgba32;
+    uint32_t width, height;
+};
+
 // A hash function used to hash a: pair<float, float>
 struct hash_pair_ff {
     size_t operator()(const std::pair<float, float>& p) const {
@@ -42,7 +48,14 @@ class GfxRenderingAPI {
     virtual uint32_t NewTexture() = 0;
     virtual void SelectTexture(int tile, uint32_t textureId) = 0;
     virtual void UploadTexture(const uint8_t* rgba32Buf, uint32_t width, uint32_t height) = 0;
+    // Uploads a mip chain into the selected texture, replacing what it held: level 0 first, each
+    // level half the size of the one before (rounded down, never below 1). Sampling a texture with
+    // more than one level filters between levels (trilinear, or point within a level for a point
+    // sampler); an UploadTexture() to the same texture makes it single-level again.
+    virtual void UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) = 0;
     virtual void SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) = 0;
+    // Bias added to the GPU's level selection when sampling a mip chain (TextureLodBiasForScale()).
+    virtual void SetTextureLodBias(float bias) = 0;
     virtual void SetDepthTestAndMask(bool depth_test, bool z_upd) = 0;
     virtual void SetZmodeDecal(bool decal) = 0;
     virtual void SetViewport(int x, int y, int width, int height) = 0;

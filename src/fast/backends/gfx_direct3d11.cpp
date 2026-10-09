@@ -603,30 +603,96 @@ void GfxRenderingAPIDX11::UploadTexture(const uint8_t* rgba32_buf, uint32_t widt
 
     ThrowIfFailed(mDevice->CreateShaderResourceView(texture_data->texture.Get(), nullptr,
                                                     texture_data->resource_view.ReleaseAndGetAddressOf()));
+
+    if (texture_data->levels != 1) {
+        // Texture ids are recycled: drop the mip filtering a previous chain left on this one.
+        texture_data->levels = 1;
+        CreateSamplerState(texture_data);
+    }
+}
+
+void GfxRenderingAPIDX11::UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) {
+    if (numLevels == 0 || levels[0].width == 0 || levels[0].height == 0) {
+        return;
+    }
+
+    TextureData* texture_data = &mTextures[mCurrentTextureIds[mCurrentTile]];
+    texture_data->width = levels[0].width;
+    texture_data->height = levels[0].height;
+
+    D3D11_TEXTURE2D_DESC texture_desc;
+    ZeroMemory(&texture_desc, sizeof(D3D11_TEXTURE2D_DESC));
+    texture_desc.Width = levels[0].width;
+    texture_desc.Height = levels[0].height;
+    texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
+    texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    texture_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    texture_desc.CPUAccessFlags = 0;
+    texture_desc.MiscFlags = 0;
+    texture_desc.ArraySize = 1;
+    texture_desc.MipLevels = numLevels;
+    texture_desc.SampleDesc.Count = 1;
+    texture_desc.SampleDesc.Quality = 0;
+
+    D3D11_SUBRESOURCE_DATA resource_data[MAX_MIP_CHAIN_LEVELS];
+    for (uint32_t n = 0; n < numLevels; n++) {
+        resource_data[n].pSysMem = levels[n].rgba32;
+        resource_data[n].SysMemPitch = levels[n].width * 4;
+        resource_data[n].SysMemSlicePitch = resource_data[n].SysMemPitch * levels[n].height;
+    }
+
+    ThrowIfFailed(
+        mDevice->CreateTexture2D(&texture_desc, resource_data, texture_data->texture.ReleaseAndGetAddressOf()));
+    ThrowIfFailed(mDevice->CreateShaderResourceView(texture_data->texture.Get(), nullptr,
+                                                    texture_data->resource_view.ReleaseAndGetAddressOf()));
+
+    texture_data->levels = numLevels;
+    CreateSamplerState(texture_data);
 }
 
 void GfxRenderingAPIDX11::SetSamplerParameters(int tile, bool linear_filter, uint32_t cms, uint32_t cmt) {
+    TextureData* texture_data = &mTextures[mCurrentTextureIds[tile]];
+    texture_data->linear_filtering = linear_filter;
+    texture_data->cms = cms;
+    texture_data->cmt = cmt;
+    CreateSamplerState(texture_data);
+}
+
+void GfxRenderingAPIDX11::CreateSamplerState(TextureData* texture_data) {
     D3D11_SAMPLER_DESC sampler_desc;
     ZeroMemory(&sampler_desc, sizeof(D3D11_SAMPLER_DESC));
 
-    sampler_desc.Filter = linear_filter && mCurrentFilterMode == FILTER_LINEAR ? D3D11_FILTER_MIN_MAG_MIP_LINEAR
-                                                                               : D3D11_FILTER_MIN_MAG_MIP_POINT;
+    const bool linear = texture_data->linear_filtering && mCurrentFilterMode == FILTER_LINEAR;
+    if (texture_data->levels > 1) {
+        // Point sampling within a level, but always blend between levels: the RDP's TRILERP.
+        sampler_desc.Filter = linear ? D3D11_FILTER_MIN_MAG_MIP_LINEAR : D3D11_FILTER_MIN_MAG_POINT_MIP_LINEAR;
+    } else {
+        sampler_desc.Filter = linear ? D3D11_FILTER_MIN_MAG_MIP_LINEAR : D3D11_FILTER_MIN_MAG_MIP_POINT;
+    }
 
-    sampler_desc.AddressU = gfx_cm_to_d3d11(cms);
-    sampler_desc.AddressV = gfx_cm_to_d3d11(cmt);
+    sampler_desc.AddressU = gfx_cm_to_d3d11(texture_data->cms);
+    sampler_desc.AddressV = gfx_cm_to_d3d11(texture_data->cmt);
     sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
     sampler_desc.MinLOD = 0;
     sampler_desc.MaxLOD = D3D11_FLOAT32_MAX;
 
-    TextureData* texture_data = &mTextures[mCurrentTextureIds[tile]];
-    texture_data->linear_filtering = linear_filter;
-
-    // This function is called twice per texture, the first one only to set default values.
-    // Maybe that could be skipped? Anyway, make sure to release the first default sampler
-    // state before setting the actual one.
+    // SetSamplerParameters() runs twice per texture, the first time only to set default values,
+    // so release the previous sampler state before creating the new one.
     texture_data->sampler_state.Reset();
 
     ThrowIfFailed(mDevice->CreateSamplerState(&sampler_desc, texture_data->sampler_state.GetAddressOf()));
+}
+
+void GfxRenderingAPIDX11::SetTextureLodBias(float bias) {
+    if (bias == mPerFrameCbData.lod_bias) {
+        return;
+    }
+    mPerFrameCbData.lod_bias = bias;
+    D3D11_MAPPED_SUBRESOURCE ms;
+    ZeroMemory(&ms, sizeof(D3D11_MAPPED_SUBRESOURCE));
+    mContext->Map(mPerFrameCb.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms);
+    memcpy(ms.pData, &mPerFrameCbData, sizeof(PerFrameCB));
+    mContext->Unmap(mPerFrameCb.Get(), 0);
 }
 
 void GfxRenderingAPIDX11::SetDepthTestAndMask(bool depth_test, bool depth_mask) {

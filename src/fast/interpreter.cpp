@@ -636,6 +636,163 @@ static uint32_t GetTileSizeFromCoordinates(float low, float high) {
     return highWhole - lowWhole + 1u;
 }
 
+// Bytes `texels` texels of size `siz` take up in a row, rounded up to a whole byte.
+static uint32_t TexelRowBytes(uint8_t siz, uint32_t texels) {
+    switch (siz) {
+        case G_IM_SIZ_4b:
+            return (texels + 1) / 2;
+        case G_IM_SIZ_8b:
+            return texels;
+        case G_IM_SIZ_16b:
+            return texels * 2;
+        default:
+            return texels * 4;
+    }
+}
+
+MipChain ResolveMipChain(const RDP& rdp, uint8_t baseTile, uint8_t maxLevel) {
+    MipChain chain;
+    // The RDP only selects a tile per pixel by LOD in 2-cycle mode with G_TL_LOD set; otherwise
+    // every pixel samples the tile G_TEXTURE named.
+    if ((rdp.other_mode_h & G_TL_LOD) == 0 || (rdp.other_mode_h & (3U << G_MDSFT_CYCLETYPE)) != G_CYC_2CYCLE ||
+        maxLevel == 0) {
+        return chain;
+    }
+    // TODO(https://github.com/liz-baker/libultraship-wiiu/issues/79): with G_TD_DETAIL or G_TD_SHARPEN,
+    // tile 0 holds a detail texture and the chain starts at tile 1.
+    if ((rdp.other_mode_h & (3U << G_MDSFT_TEXTDETAIL)) != G_TD_CLAMP) {
+        return chain;
+    }
+    const auto& base = rdp.texture_tile[baseTile & 7];
+    // RGBA32 splits each texel across TMEM's high and low halves, so its levels aren't laid out
+    // as plain rows past the tile's TMEM address.
+    if (base.siz == G_IM_SIZ_32b) {
+        return chain;
+    }
+
+    uint32_t prevWidth = 0;
+    uint32_t prevHeight = 0;
+    for (uint32_t n = 0; n <= maxLevel && n < MAX_MIP_CHAIN_LEVELS; n++) {
+        uint8_t t = (baseTile + n) & 7;
+        const auto& tile = rdp.texture_tile[t];
+        if (tile.fmt != base.fmt || tile.siz != base.siz) {
+            break;
+        }
+        uint32_t width = GetTileSizeFromCoordinates(tile.uls, tile.lrs);
+        uint32_t height = GetTileSizeFromCoordinates(tile.ult, tile.lrt);
+        // A zero-sized SETTILESIZE reads as "unset" for a base tile, but below level 0 it is the
+        // literal 1-texel tile a chain's last levels need.
+        if (n > 0) {
+            width = (width == 0 && tile.lrs == tile.uls) ? 1 : width;
+            height = (height == 0 && tile.lrt == tile.ult) ? 1 : height;
+        }
+        if (width == 0 || height == 0) {
+            break;
+        }
+        if (n > 0 && (width != std::max(1u, prevWidth / 2) || height != std::max(1u, prevHeight / 2))) {
+            break;
+        }
+        const auto& loaded = rdp.loaded_texture[tile.tmem_index];
+        uint32_t rowBytes = TexelRowBytes(tile.siz, width);
+        if (loaded.addr == nullptr || tile.line_size_bytes < rowBytes) {
+            break;
+        }
+        uint64_t end = TileTmemByteOffset(&rdp, t) + (uint64_t)tile.line_size_bytes * (height - 1) + rowBytes;
+        if (end > loaded.size_bytes) {
+            break;
+        }
+        chain.levels[n] = { t, width, height };
+        chain.numLevels = (uint8_t)(n + 1);
+        prevWidth = width;
+        prevHeight = height;
+    }
+    if (chain.numLevels < 2) {
+        chain.numLevels = 0;
+    }
+    return chain;
+}
+
+float TextureLodBiasForScale(float resolutionScale) {
+    if (!(resolutionScale > 1.0f)) {
+        return 0.0f;
+    }
+    return std::log2(resolutionScale);
+}
+
+// Decodes a `width` x `height` block of texels whose rows start `strideBytes` apart into tightly
+// packed RGBA8. Reads rows linearly, the same as the single-level ImportTexture* decoders.
+// Returns false for a format it can't decode (YUV, or a CI texture with no palette loaded).
+static bool DecodeTexelRows(const RDP& rdp, uint8_t fmt, uint8_t siz, uint8_t palette, const uint8_t* src,
+                            uint32_t width, uint32_t height, uint32_t strideBytes, uint8_t* out) {
+    auto rgba5551 = [](const uint8_t* p, uint8_t* dst) {
+        uint16_t col16 = (p[0] << 8) | p[1];
+        dst[0] = SCALE_5_8(col16 >> 11);
+        dst[1] = SCALE_5_8((col16 >> 6) & 0x1f);
+        dst[2] = SCALE_5_8((col16 >> 1) & 0x1f);
+        dst[3] = (col16 & 1) ? 255 : 0;
+    };
+    auto nibble = [](const uint8_t* row, uint32_t x) -> uint8_t { return (row[x / 2] >> (4 - (x % 2) * 4)) & 0xf; };
+
+    const uint8_t* ci4Palette = nullptr;
+    if (fmt == G_IM_FMT_CI) {
+        if (siz == G_IM_SIZ_4b) {
+            if (rdp.palettes[palette / 8] == nullptr) {
+                return false;
+            }
+            ci4Palette = rdp.palettes[palette / 8] + (palette % 8) * 16 * 2;
+        } else if (siz == G_IM_SIZ_8b && (rdp.palettes[0] == nullptr || rdp.palettes[1] == nullptr)) {
+            return false;
+        }
+    }
+
+    for (uint32_t y = 0; y < height; y++) {
+        const uint8_t* row = src + (size_t)y * strideBytes;
+        for (uint32_t x = 0; x < width; x++) {
+            uint8_t* dst = out + ((size_t)y * width + x) * 4;
+            switch (fmt) {
+                case G_IM_FMT_RGBA:
+                    // RGBA16 is the only RGBA size ResolveMipChain lets through.
+                    rgba5551(row + x * 2, dst);
+                    break;
+                case G_IM_FMT_IA:
+                    if (siz == G_IM_SIZ_4b) {
+                        uint8_t part = nibble(row, x);
+                        dst[0] = dst[1] = dst[2] = SCALE_3_8(part >> 1);
+                        dst[3] = (part & 1) ? 255 : 0;
+                    } else if (siz == G_IM_SIZ_8b) {
+                        dst[0] = dst[1] = dst[2] = SCALE_4_8(row[x] >> 4);
+                        dst[3] = SCALE_4_8(row[x] & 0xf);
+                    } else {
+                        dst[0] = dst[1] = dst[2] = row[x * 2];
+                        dst[3] = row[x * 2 + 1];
+                    }
+                    break;
+                case G_IM_FMT_I:
+                    if (siz == G_IM_SIZ_4b) {
+                        dst[0] = dst[1] = dst[2] = dst[3] = SCALE_4_8(nibble(row, x));
+                    } else {
+                        dst[0] = dst[1] = dst[2] = dst[3] = row[x];
+                    }
+                    break;
+                case G_IM_FMT_CI:
+                    if (siz == G_IM_SIZ_4b) {
+                        rgba5551(ci4Palette + nibble(row, x) * 2, dst);
+                    } else if (siz == G_IM_SIZ_8b) {
+                        uint8_t idx = row[x];
+                        rgba5551(rdp.palettes[idx / 128] + (idx % 128) * 2, dst);
+                    } else {
+                        // CI16 is hardware-invalid; ImportTexture decodes it as RGBA16 too.
+                        rgba5551(row + x * 2, dst);
+                    }
+                    break;
+                default:
+                    return false;
+            }
+        }
+    }
+    return true;
+}
+
 void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
     const RawTexMetadata* metadata = &mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata;
     const uint8_t* addr =
@@ -1327,7 +1484,49 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
     mRapi->UploadTexture(mTexUploadBuffer, uploadWidth, uploadHeight);
 }
 
-void Interpreter::ImportTexture(int i, int tile, bool importReplacement) {
+void Interpreter::ImportMipChain(const MipChain& chain) {
+    size_t totalBytes = 0;
+    for (uint8_t n = 0; n < chain.numLevels; n++) {
+        totalBytes += (size_t)chain.levels[n].width * chain.levels[n].height * 4;
+    }
+    if (mMipChainUploadBuffer.size() < totalBytes) {
+        mMipChainUploadBuffer.resize(totalBytes);
+    }
+
+    TextureMipLevel levels[MAX_MIP_CHAIN_LEVELS];
+    uint32_t numLevels = 0;
+    uint8_t* out = mMipChainUploadBuffer.data();
+    for (uint8_t n = 0; n < chain.numLevels; n++) {
+        const MipChainLevel& level = chain.levels[n];
+        const auto& tile = mRdp->texture_tile[level.tile];
+        if (!DecodeTexelRows(*mRdp, tile.fmt, tile.siz, tile.palette, TileTextureAddr(mRdp, level.tile), level.width,
+                             level.height, tile.line_size_bytes, out)) {
+            break;
+        }
+        levels[numLevels++] = { out, level.width, level.height };
+        out += (size_t)level.width * level.height * 4;
+    }
+    if (numLevels == 0) {
+        SPDLOG_ERROR("ImportMipChain: can't decode fmt {} siz {} for tile {}",
+                     mRdp->texture_tile[chain.levels[0].tile].fmt, mRdp->texture_tile[chain.levels[0].tile].siz,
+                     chain.levels[0].tile);
+        return;
+    }
+    mRapi->UploadTextureMipChain(levels, numLevels);
+}
+
+bool Interpreter::CanImportMipChain(int tile) const {
+    const auto& loaded = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index];
+    // Resource-loaded images, HD replacements, masked/blended textures and framebuffer mirrors
+    // aren't TMEM-layout texels the chain decoder can walk.
+    if (loaded.masked || loaded.blended || (loaded.tex_flags & (TEX_FLAG_LOAD_AS_IMG | TEX_FLAG_LOAD_AS_RAW)) != 0 ||
+        loaded.raw_tex_metadata.h_byte_scale != 1 || loaded.raw_tex_metadata.v_pixel_scale != 1) {
+        return false;
+    }
+    return loaded.addr == nullptr || mFbTextures.find((uintptr_t)TileTextureAddr(mRdp, tile)) == mFbTextures.end();
+}
+
+void Interpreter::ImportTexture(int i, int tile, bool importReplacement, const MipChain* mipChain) {
     uint8_t fmt = mRdp->texture_tile[tile].fmt;
     uint8_t siz = mRdp->texture_tile[tile].siz;
     uint32_t texFlags = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tex_flags;
@@ -1391,6 +1590,10 @@ void Interpreter::ImportTexture(int i, int tile, bool importReplacement) {
     } else {
         key = { origAddr, {}, fmt, siz, paletteIndex, origSizeBytes };
     }
+    bool importChain = mipChain != nullptr && mipChain->numLevels >= 2 && !importReplacement;
+    if (importChain) {
+        key.mip_levels = mipChain->numLevels;
+    }
 
     if (TextureCacheLookup(i, key)) {
         return;
@@ -1400,6 +1603,11 @@ void Interpreter::ImportTexture(int i, int tile, bool importReplacement) {
     // or GPU API errors in UploadTexture.
     if (mRdp->texture_tile[tile].line_size_bytes == 0 || mRdp->loaded_texture[tmemIdex].size_bytes == 0 ||
         origAddr == nullptr) {
+        return;
+    }
+
+    if (importChain) {
+        ImportMipChain(*mipChain);
         return;
     }
 
@@ -2026,19 +2234,31 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     uint32_t tex_width[2], tex_height[2], tex_width2[2], tex_height2[2];
     uint32_t effective_tile[2];
 
+    // A real G_TL_LOD chain is uploaded as one mipmapped texture and the GPU does the RDP's
+    // per-pixel level pick and the TRILERP blend between levels in its sampler. Both slots sample
+    // that texture, so a TRILERP combiner's lerp(TEXEL0, TEXEL1, LOD_FRACTION) returns the GPU's
+    // blend whatever the fraction (it's also forced to 0 below).
+    MipChain mipChain{};
+    if ((comb->usedTextures[0] || comb->usedTextures[1]) && CanImportMipChain(mRdp->first_tile_index)) {
+        mipChain = ResolveMipChain(*mRdp, mRdp->first_tile_index, mRdp->texture_max_level);
+    }
+    const bool useMipChain = mipChain.numLevels >= 2;
+
     for (int i = 0; i < 2; i++) {
         uint32_t tile = mRdp->first_tile_index + i;
 
-        // No LOD support: force both slots to the base mip level.
-        if (i == 1 && mRdp->first_tile_index >= 2) {
+        // Without a chain to upload, both slots sample the base level.
+        if (useMipChain || (i == 1 && mRdp->first_tile_index >= 2)) {
             tile = mRdp->first_tile_index;
         }
         effective_tile[i] = tile;
 
         if (comb->usedTextures[i]) {
-            if (mRdp->textures_changed[i]) {
+            uint8_t mipLevels = useMipChain ? mipChain.numLevels : 0;
+            if (mRdp->textures_changed[i] || mRenderingState.mip_levels[i] != mipLevels) {
                 Flush();
-                ImportTexture(i, tile, false);
+                mRenderingState.mip_levels[i] = mipLevels;
+                ImportTexture(i, tile, false, useMipChain ? &mipChain : nullptr);
                 if (mRdp->loaded_texture[i].masked) {
                     ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);
                 }
@@ -2115,6 +2335,12 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             }
             if ((isHd || pyrLike || (cmt & G_TX_CLAMP)) && tex_height2[i] > 0 && tex_height2[i] < tex_height[i]) {
                 tex_height[i] = tex_height2[i];
+            }
+
+            if (useMipChain) {
+                // The level-0 tile's own size, which is what the uploaded chain's base level is.
+                tex_width[i] = tex_width2[i] = mipChain.levels[0].width;
+                tex_height[i] = tex_height2[i] = mipChain.levels[0].height;
             }
 
             uint32_t tex_width1 = tex_width[i] << (cms & G_TX_MIRROR);
@@ -2317,8 +2543,15 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                     }
                     case G_CCMUX_LOD_FRACTION: {
                         float distance_frac = 255.0f;
-                        if ((mRdp->other_mode_l & G_TL_LOD) && !same_size_fake_mip) {
-                            // "Hack" that works for Bowser - Peach painting
+                        if (useMipChain) {
+                            // The GPU sampler already blended the two levels (see useMipChain).
+                            distance_frac = 0.0f;
+                        } else if ((mRdp->other_mode_l & G_TL_LOD) && !same_size_fake_mip) {
+                            // Fallback for display lists that use LOD_FRACTION without a chain
+                            // ResolveMipChain accepts: approximate the fraction from vertex w, tuned
+                            // for SM64's Bowser/Peach painting. This tests other_mode_l, though
+                            // G_TL_LOD is an other_mode_h bit; the check is kept as it was so games
+                            // tuned against it don't change.
                             distance_frac = (v1->w - 3000.0f) / 3000.0f;
                             if (distance_frac < 0.0f) {
                                 distance_frac = 0.0f;
@@ -2556,12 +2789,13 @@ void Interpreter::GfxSpMovewordF3d(uint8_t index, uint16_t offset, uintptr_t dat
 void Interpreter::GfxSpTexture(uint16_t sc, uint16_t tc, uint8_t level, uint8_t tile, uint8_t on) {
     mRsp->texture_scaling_factor.s = sc;
     mRsp->texture_scaling_factor.t = tc;
-    if (mRdp->first_tile_index != tile) {
+    if (mRdp->first_tile_index != tile || mRdp->texture_max_level != level) {
         mRdp->textures_changed[0] = true;
         mRdp->textures_changed[1] = true;
     }
 
     mRdp->first_tile_index = tile;
+    mRdp->texture_max_level = level;
 }
 
 void Interpreter::GfxDpSetScissor(uint32_t mode, uint32_t ulx, uint32_t uly, uint32_t lrx, uint32_t lry) {
@@ -4448,8 +4682,8 @@ bool gfx_reset_fb_handler_custom(F3DGfx** cmd0) {
     gfx->Flush();
     gfx->mFbActive = false;
     gfx->mActiveFrameBuffer = gfx->mFrameBuffers.end();
-    gfx->mRapi->StartDrawToFramebuffer(gfx->mRendersToFb ? gfx->mGameFb : 0,
-                                       (float)gfx->mCurDimensions.height / gfx->mNativeDimensions.height);
+    gfx->StartDrawToFramebuffer(gfx->mRendersToFb ? gfx->mGameFb : 0,
+                                (float)gfx->mCurDimensions.height / gfx->mNativeDimensions.height);
     // Force viewport and scissor to reapply against the main framebuffer, in case a previous smaller
     // framebuffer truncated the values
     gfx->mRdp->viewport_or_scissor_changed = true;
@@ -5314,6 +5548,13 @@ static void gfx_step() {
     ++cmd;
 }
 
+void Interpreter::StartDrawToFramebuffer(int fbId, float resolutionScale) {
+    mRapi->StartDrawToFramebuffer(fbId, resolutionScale);
+    // On by default; ports that prefer the GPU's sharper level choice at high resolution turn it off.
+    bool matchNative = mConsoleVariable->GetInteger(CVAR_TEXTURE_LOD_NATIVE_BIAS, 1) != 0;
+    mRapi->SetTextureLodBias(matchNative ? TextureLodBiasForScale(resolutionScale) : 0.0f);
+}
+
 void Interpreter::SpReset() {
     while (!mShaderStack.empty()) {
         mShaderStack.pop();
@@ -5501,7 +5742,7 @@ void Interpreter::RunGuiOnly() {
     mRapi->UpdateFramebufferParameters(0, mGfxCurrentWindowDimensions.width, mGfxCurrentWindowDimensions.height, 1,
                                        false, true, true, !mRendersToFb);
     mRapi->StartFrame();
-    mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, (float)mCurDimensions.height / mNativeDimensions.height);
+    StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, (float)mCurDimensions.height / mNativeDimensions.height);
     mRapi->ClearFramebuffer(true, true);
     mRdp->viewport_or_scissor_changed = true;
     mRenderingState.viewport = {};
@@ -5543,7 +5784,7 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
     mRapi->UpdateFramebufferParameters(0, mGfxCurrentWindowDimensions.width, mGfxCurrentWindowDimensions.height, 1,
                                        false, true, true, !mRendersToFb);
     mRapi->StartFrame();
-    mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, (float)mCurDimensions.height / mNativeDimensions.height);
+    StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, (float)mCurDimensions.height / mNativeDimensions.height);
     mRapi->ClearFramebuffer(true, true);
     mRdp->viewport_or_scissor_changed = true;
     mRenderingState.viewport = {};
@@ -5637,7 +5878,7 @@ int Interpreter::CreateFrameBuffer(uint32_t width, uint32_t height, uint32_t nat
 }
 
 void Interpreter::SetFrameBuffer(int fb, float noiseScale) {
-    mRapi->StartDrawToFramebuffer(fb, noiseScale);
+    StartDrawToFramebuffer(fb, noiseScale);
     mRapi->ClearFramebuffer(false, true);
 }
 
@@ -5684,7 +5925,7 @@ void Interpreter::CopyFrameBuffer(int fb_dst_id, int fb_src_id, bool copyOnce, b
 }
 
 void Interpreter::ResetFrameBuffer() {
-    mRapi->StartDrawToFramebuffer(0, (float)mCurDimensions.height / mNativeDimensions.height);
+    StartDrawToFramebuffer(0, (float)mCurDimensions.height / mNativeDimensions.height);
 }
 
 void Interpreter::AdjustPixelDepthCoordinates(float& x, float& y) {

@@ -31,6 +31,9 @@ class NullGfxRenderingAPI final : public GfxRenderingAPI {
         uint32_t textureId;
         uint32_t width, height;
         std::vector<uint8_t> rgba32;
+        // Set when this upload came through UploadTextureMipChain(): the chain's levels after the
+        // first, which width/height/rgba32 describe.
+        std::vector<Upload> lowerLevels;
     };
     struct SamplerCall {
         int sampler;
@@ -49,6 +52,7 @@ class NullGfxRenderingAPI final : public GfxRenderingAPI {
     std::vector<std::pair<uint64_t, uint64_t>> shadersCreated;
     std::vector<Draw> draws;
     std::vector<uint32_t> deletedTextures;
+    std::vector<float> lodBiasCalls;
 
     void ClearRecording() {
         uploads.clear();
@@ -56,6 +60,7 @@ class NullGfxRenderingAPI final : public GfxRenderingAPI {
         shadersCreated.clear();
         draws.clear();
         deletedTextures.clear();
+        lodBiasCalls.clear();
     }
 
     const char* GetName() override {
@@ -118,9 +123,24 @@ class NullGfxRenderingAPI final : public GfxRenderingAPI {
         }
     }
     void UploadTexture(const uint8_t* rgba32Buf, uint32_t width, uint32_t height) override {
-        Upload up{ mCurrentTile, SelectedTexture(), width, height, {} };
+        Upload up{ mCurrentTile, SelectedTexture(), width, height, {}, {} };
         up.rgba32.assign(rgba32Buf, rgba32Buf + (size_t)width * height * 4);
         uploads.push_back(std::move(up));
+    }
+    void UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) override {
+        auto record = [&](const TextureMipLevel& level) {
+            Upload up{ mCurrentTile, SelectedTexture(), level.width, level.height, {}, {} };
+            up.rgba32.assign(level.rgba32, level.rgba32 + (size_t)level.width * level.height * 4);
+            return up;
+        };
+        Upload base = record(levels[0]);
+        for (uint32_t n = 1; n < numLevels; n++) {
+            base.lowerLevels.push_back(record(levels[n]));
+        }
+        uploads.push_back(std::move(base));
+    }
+    void SetTextureLodBias(float bias) override {
+        lodBiasCalls.push_back(bias);
     }
     void SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) override {
         uint32_t textureId = (sampler >= 0 && sampler < SHADER_MAX_TEXTURES) ? mSelected[sampler] : 0;

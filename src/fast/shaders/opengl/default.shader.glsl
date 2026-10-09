@@ -128,6 +128,8 @@
     uniform int texture_width[2];
     uniform int texture_height[2];
     uniform int texture_filtering[2];
+    uniform int texture_levels[2];
+    uniform float texture_lod_bias;
 
     #define TEX_OFFSET(off) @{texture}(tex, texCoord - off / texSize)
     #define WRAP(x, low, high) clamp((x), (low), (high))
@@ -153,13 +155,42 @@
         return c0 + abs(offset.x)*(c1-c0) + abs(offset.y)*(c2-c0);
     }
 
+    // filter3point() at one level of a mip chain.
+    vec4 filter3pointLevel(in sampler2D tex, in vec2 texCoord, in vec2 texSize, in float level) {
+        vec2 levelSize = max(floor(texSize / exp2(level)), vec2(1.0));
+        vec2 offset = fract(texCoord*levelSize - vec2(0.5));
+        offset -= step(1.0, offset.x + offset.y);
+        vec4 c0 = textureLod(tex, texCoord - offset / levelSize, level);
+        vec4 c1 = textureLod(tex, texCoord - vec2(offset.x - sign(offset.x), offset.y) / levelSize, level);
+        vec4 c2 = textureLod(tex, texCoord - vec2(offset.x, offset.y - sign(offset.y)) / levelSize, level);
+        return c0 + abs(offset.x)*(c1-c0) + abs(offset.y)*(c2-c0);
+    }
+
+    // The RDP's TRILERP over 3-point filtered levels: pick the level from the texel footprint the
+    // way the GPU would, then blend the two levels either side of it.
+    vec4 filter3pointMip(in sampler2D tex, in vec2 texCoord, in vec2 texSize, in int levels) {
+        vec2 dx = dFdx(texCoord * texSize);
+        vec2 dy = dFdy(texCoord * texSize);
+        float lod = 0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1e-8)) + texture_lod_bias;
+        lod = clamp(lod, 0.0, float(levels - 1));
+        float level0 = floor(lod);
+        vec4 c = filter3pointLevel(tex, texCoord, texSize, level0);
+        if (lod > level0) {
+            c = mix(c, filter3pointLevel(tex, texCoord, texSize, level0 + 1.0), lod - level0);
+        }
+        return c;
+    }
+
     vec4 hookTexture2D(in int id, sampler2D tex, in vec2 uv, in vec2 texSize) {
     @if(o_three_point_filtering)
         if(texture_filtering[id] == @{FILTER_THREE_POINT}) {
+            if (texture_levels[id] > 1) {
+                return filter3pointMip(tex, uv, texSize, texture_levels[id]);
+            }
             return filter3point(tex, uv, texSize);
         }
     @end
-        return @{texture}(tex, uv);
+        return @{texture}(tex, uv, texture_lod_bias);
     }
 
     #define TEX_SIZE(tex) vec2(texture_width[tex], texture_height[tex])
