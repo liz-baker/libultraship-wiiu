@@ -56,6 +56,9 @@ class GfxRenderingAPI {
     virtual void SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) = 0;
     // Bias added to the GPU's level selection when sampling a mip chain (TextureLodBiasForScale()).
     virtual void SetTextureLodBias(float bias) = 0;
+    // Floor of the per-pixel LOD_FRACTION a detail or sharpen shader computes when magnified, in
+    // texels per pixel (G_SETPRIMCOLOR's minimum level / 32).
+    virtual void SetTexturePrimLodMin(float minLod) = 0;
     virtual void SetDepthTestAndMask(bool depth_test, bool z_upd) = 0;
     virtual void SetZmodeDecal(bool decal) = 0;
     virtual void SetViewport(int x, int y, int width, int height) = 0;

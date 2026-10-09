@@ -144,6 +144,7 @@ struct FrameUniforms {
 struct DrawUniforms {
     simd::int1 textureFiltering[SHADER_MAX_TEXTURES];
     simd::float1 lodBias;
+    simd::float1 primLodMin;
     simd::float1 prim_depth;
 };
 
@@ -177,6 +178,7 @@ class GfxRenderingAPIMetal final : public GfxRenderingAPI {
     void UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) override;
     void SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) override;
     void SetTextureLodBias(float bias) override;
+    void SetTexturePrimLodMin(float minLod) override;
 
   private:
     void CreateSamplerState(TextureDataMetal* textureData);
@@ -244,7 +246,7 @@ class GfxRenderingAPIMetal final : public GfxRenderingAPI {
     FrameUniforms mFrameUniforms;
     CoordUniforms mCoordUniforms;
     DrawUniforms mDrawUniforms;
-    bool mLodBiasDirty = true;
+    bool mLodUniformsDirty = true;
     MTL::Buffer* mFrameUniformBuffer;
 
     uint32_t mMsaaNumQualityLevels[METAL_MAX_MULTISAMPLE_SAMPLE_COUNT];

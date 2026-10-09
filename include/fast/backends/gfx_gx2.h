@@ -31,6 +31,7 @@ struct ShaderProgram {
     bool used_textures[2];
     bool used_noise;
     uint32_t window_params_offset;
+    int32_t lod_params_offset;
     int32_t samplers_location[SHADER_MAX_TEXTURES];
 };
 
@@ -59,6 +60,7 @@ class GfxRenderingAPIGX2 final : public GfxRenderingAPI {
     void UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) override;
     void SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) override;
     void SetTextureLodBias(float bias) override;
+    void SetTexturePrimLodMin(float minLod) override;
     void SetDepthTestAndMask(bool depth_test, bool z_upd) override;
     void SetZmodeDecal(bool decal) override;
     void SetViewport(int x, int y, int width, int height) override;
@@ -127,6 +129,7 @@ class GfxRenderingAPIGX2 final : public GfxRenderingAPI {
     void SetUniforms(ShaderProgram* prg);
     void BindTextureSlot(int tile, Texture* tex);
     void InitTextureSampler(Texture* tex);
+    void SetLodUniforms(ShaderProgram* prg);
 
     std::array<Framebuffer, 100> mFramebuffers{};
     std::size_t mUsedFramebuffers = 0;
@@ -139,6 +142,7 @@ class GfxRenderingAPIGX2 final : public GfxRenderingAPI {
     Texture* mCurrentTexture = nullptr;
     int mCurrentTile = 0;
     float mTextureLodBias = 0.0f;
+    float mPrimLodMin = 0.0f;
 
     // Texture/sampler last bound per shader sampler slot, so StartFrame() can rebind them after
     // ImGui's GX2 pass clobbers the same hardware slots (see BindTextureSlot()).

@@ -53,6 +53,7 @@ struct ShaderProgram {
     GLint texture_filtering_location;
     GLint texture_levels_location;
     GLint texture_lod_bias_location;
+    GLint prim_lod_min_location;
 };
 
 /**
@@ -105,6 +106,7 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     void UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) override;
     void SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) override;
     void SetTextureLodBias(float bias) override;
+    void SetTexturePrimLodMin(float minLod) override;
     void SetDepthTestAndMask(bool depth_test, bool z_upd) override;
     void SetCurrentPrimDepth(float depth) override;
     void SetZmodeDecal(bool decal) override;
@@ -169,6 +171,7 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     size_t mCurrentFrameBuffer = 0;
     float mCurrentNoiseScale = 0.0f;
     float mTextureLodBias = 0.0f;
+    float mPrimLodMin = 0.0f;
     // Applies the min filter for the bound texture's level count and filter mode.
     void ApplyMinFilter(const TextureInfo& tex) const;
     FilteringMode mCurrentFilterMode = FILTER_THREE_POINT;

@@ -201,6 +201,7 @@ const char* Interpreter::ACMUXtoStr(uint32_t acmux) {
 
 void Interpreter::GenerateCC(ColorCombiner* comb, const ColorCombinerKey& key) {
     const bool is2Cyc = (key.options & SHADER_OPT(_2CYC)) != 0;
+    const bool perPixelLodFraction = (key.options & (SHADER_OPT(TEX_DETAIL) | SHADER_OPT(TEX_SHARPEN))) != 0;
 
     uint8_t c[2][2][4];
     uint64_t shaderId0 = 0;
@@ -344,6 +345,12 @@ void Interpreter::GenerateCC(ColorCombiner* comb, const ColorCombinerKey& key) {
                     case G_CCMUX_NOISE:
                         val = SHADER_NOISE;
                         break;
+                    case G_CCMUX_LOD_FRACTION:
+                        if (perPixelLodFraction) {
+                            val = SHADER_LOD_FRACTION;
+                            break;
+                        }
+                        [[fallthrough]];
                     case G_CCMUX_PRIMITIVE:
                     case G_CCMUX_PRIMITIVE_ALPHA:
                     case G_CCMUX_PRIM_LOD_FRAC:
@@ -351,7 +358,6 @@ void Interpreter::GenerateCC(ColorCombiner* comb, const ColorCombinerKey& key) {
                     case G_CCMUX_SHADE_ALPHA:
                     case G_CCMUX_ENVIRONMENT:
                     case G_CCMUX_ENV_ALPHA:
-                    case G_CCMUX_LOD_FRACTION:
                     case G_CCMUX_KEY_CENTER:
                     case G_CCMUX_KEY_SCALE:
                     case G_CCMUX_CONVERT_K4:
@@ -404,6 +410,10 @@ void Interpreter::GenerateCC(ColorCombiner* comb, const ColorCombinerKey& key) {
                         // case G_ACMUX_COMBINED: same numerical value
                         if (j != 2) {
                             val = SHADER_COMBINED;
+                            break;
+                        }
+                        if (perPixelLodFraction) {
+                            val = SHADER_LOD_FRACTION;
                             break;
                         }
                         c[i][1][j] = G_CCMUX_LOD_FRACTION;
@@ -656,11 +666,6 @@ MipChain ResolveMipChain(const RDP& rdp, uint8_t baseTile, uint8_t maxLevel) {
     // every pixel samples the tile G_TEXTURE named.
     if ((rdp.other_mode_h & G_TL_LOD) == 0 || (rdp.other_mode_h & (3U << G_MDSFT_CYCLETYPE)) != G_CYC_2CYCLE ||
         maxLevel == 0) {
-        return chain;
-    }
-    // TODO(https://github.com/liz-baker/libultraship-wiiu/issues/79): with G_TD_DETAIL or G_TD_SHARPEN,
-    // tile 0 holds a detail texture and the chain starts at tile 1.
-    if ((rdp.other_mode_h & (3U << G_MDSFT_TEXTDETAIL)) != G_TD_CLAMP) {
         return chain;
     }
     const auto& base = rdp.texture_tile[baseTile & 7];
@@ -2205,6 +2210,33 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         cc_options |= SHADER_OPT(PRIM_DEPTH);
     }
 
+    // A real G_TL_LOD chain is uploaded as one mipmapped texture and the GPU does the RDP's
+    // per-pixel level pick and the TRILERP blend between levels in its sampler. Both slots sample
+    // that texture, so a TRILERP combiner's lerp(TEXEL0, TEXEL1, LOD_FRACTION) returns the GPU's
+    // blend whatever the fraction (it's also forced to 0 below).
+    //
+    // With G_TD_DETAIL, tile 0 holds a separate detail texture and the chain starts at tile 1:
+    // slot 0 samples the detail tile and slot 1 the chain. G_TD_SHARPEN keeps the chain at tile 0.
+    // Both need the RDP's magnified-LOD behaviour, which the shader computes per pixel (see
+    // ShaderOpts::TEX_DETAIL).
+    const uint32_t textureDetail = mRdp->other_mode_h & (3U << G_MDSFT_TEXTDETAIL);
+    const bool textureLod = use_2cyc && (mRdp->other_mode_h & G_TL_LOD) != 0;
+    const bool lodDetail = textureLod && textureDetail == G_TD_DETAIL;
+    const uint8_t chainBaseTile = (mRdp->first_tile_index + (lodDetail ? 1 : 0)) & 7;
+    MipChain mipChain{};
+    if (textureLod && CanImportMipChain(chainBaseTile)) {
+        mipChain = ResolveMipChain(*mRdp, chainBaseTile, mRdp->texture_max_level);
+    }
+    const bool useMipChain = mipChain.numLevels >= 2;
+    // Sharpen extrapolates from level 0 away from level 1, so it needs a second level to exist.
+    const bool lodSharpen = textureLod && textureDetail == G_TD_SHARPEN && useMipChain;
+    if (lodDetail) {
+        cc_options |= SHADER_OPT(TEX_DETAIL);
+    }
+    if (lodSharpen) {
+        cc_options |= SHADER_OPT(TEX_SHARPEN);
+    }
+
     if (!mShaderStack.empty()) {
         cc_options |= (mShaderStack.top() << SHADER_ID_SHIFT);
     } else {
@@ -2234,31 +2266,25 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     uint32_t tex_width[2], tex_height[2], tex_width2[2], tex_height2[2];
     uint32_t effective_tile[2];
 
-    // A real G_TL_LOD chain is uploaded as one mipmapped texture and the GPU does the RDP's
-    // per-pixel level pick and the TRILERP blend between levels in its sampler. Both slots sample
-    // that texture, so a TRILERP combiner's lerp(TEXEL0, TEXEL1, LOD_FRACTION) returns the GPU's
-    // blend whatever the fraction (it's also forced to 0 below).
-    MipChain mipChain{};
-    if ((comb->usedTextures[0] || comb->usedTextures[1]) && CanImportMipChain(mRdp->first_tile_index)) {
-        mipChain = ResolveMipChain(*mRdp, mRdp->first_tile_index, mRdp->texture_max_level);
-    }
-    const bool useMipChain = mipChain.numLevels >= 2;
-
     for (int i = 0; i < 2; i++) {
         uint32_t tile = mRdp->first_tile_index + i;
+        const bool chainSlot = useMipChain && (!lodDetail || i == 1);
 
-        // Without a chain to upload, both slots sample the base level.
-        if (useMipChain || (i == 1 && mRdp->first_tile_index >= 2)) {
+        if (lodDetail) {
+            // Slot 0 is the detail tile, slot 1 the base texture after it.
+            tile = (mRdp->first_tile_index + i) & 7;
+        } else if (useMipChain || (i == 1 && mRdp->first_tile_index >= 2)) {
+            // Without a chain to upload, both slots sample the base level.
             tile = mRdp->first_tile_index;
         }
         effective_tile[i] = tile;
 
         if (comb->usedTextures[i]) {
-            uint8_t mipLevels = useMipChain ? mipChain.numLevels : 0;
+            uint8_t mipLevels = chainSlot ? mipChain.numLevels : 0;
             if (mRdp->textures_changed[i] || mRenderingState.mip_levels[i] != mipLevels) {
                 Flush();
                 mRenderingState.mip_levels[i] = mipLevels;
-                ImportTexture(i, tile, false, useMipChain ? &mipChain : nullptr);
+                ImportTexture(i, tile, false, chainSlot ? &mipChain : nullptr);
                 if (mRdp->loaded_texture[i].masked) {
                     ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);
                 }
@@ -2337,7 +2363,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                 tex_height[i] = tex_height2[i];
             }
 
-            if (useMipChain) {
+            if (chainSlot) {
                 // The level-0 tile's own size, which is what the uploaded chain's base level is.
                 tex_width[i] = tex_width2[i] = mipChain.levels[0].width;
                 tex_height[i] = tex_height2[i] = mipChain.levels[0].height;
@@ -2401,6 +2427,14 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         Flush();
         mRapi->SetUseAlpha(use_alpha);
         mRenderingState.alpha_blend = use_alpha;
+    }
+    if (lodDetail || lodSharpen) {
+        const float primLodMin = mRdp->prim_lod_min / 32.0f;
+        if (primLodMin != mRenderingState.prim_lod_min) {
+            Flush();
+            mRapi->SetTexturePrimLodMin(primLodMin);
+            mRenderingState.prim_lod_min = primLodMin;
+        }
     }
     uint8_t numInputs;
     bool usedTextures[2];
@@ -3166,6 +3200,7 @@ void Interpreter::GfxDpSetEnvColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
 }
 
 void Interpreter::GfxDpSetPrimColor(uint8_t m, uint8_t l, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    mRdp->prim_lod_min = m & 0x1f;
     mRdp->prim_lod_fraction = l;
     mRdp->prim_color.r = r;
     mRdp->prim_color.g = g;
@@ -6062,6 +6097,8 @@ void gfx_cc_get_features(uint64_t shader_id0, uint64_t shader_id1, struct CCFeat
     cc_features->opt_invisible = (shader_id1 & SHADER_OPT(INVISIBLE)) != 0;
     cc_features->opt_grayscale = (shader_id1 & SHADER_OPT(GRAYSCALE)) != 0;
     cc_features->opt_prim_depth = (shader_id1 & SHADER_OPT(PRIM_DEPTH)) != 0;
+    cc_features->opt_lod_detail = (shader_id1 & SHADER_OPT(TEX_DETAIL)) != 0;
+    cc_features->opt_lod_sharpen = (shader_id1 & SHADER_OPT(TEX_SHARPEN)) != 0;
 
     cc_features->clamp[0][0] = shader_id1 & SHADER_OPT(TEXEL0_CLAMP_S);
     cc_features->clamp[0][1] = shader_id1 & SHADER_OPT(TEXEL0_CLAMP_T);

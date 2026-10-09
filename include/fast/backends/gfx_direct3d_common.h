@@ -24,7 +24,7 @@ struct PerFrameCB {
     uint32_t noise_frame;
     float noise_scale;
     float lod_bias;
-    uint32_t padding; // constant buffers must be multiples of 16 bytes in size
+    float prim_lod_min; // fills the struct to the 16-byte multiple constant buffers need
 };
 
 /**
@@ -135,9 +135,11 @@ class GfxRenderingAPIDX11 final : public GfxRenderingAPI {
     void UploadTextureMipChain(const TextureMipLevel* levels, uint32_t numLevels) override;
     void SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) override;
     void SetTextureLodBias(float bias) override;
+    void SetTexturePrimLodMin(float minLod) override;
 
   private:
     void CreateSamplerState(TextureData* textureData);
+    void UploadPerFrameCb();
 
   public:
     void SetDepthTestAndMask(bool depth_test, bool z_upd) override;

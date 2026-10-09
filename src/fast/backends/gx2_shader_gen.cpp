@@ -18,14 +18,26 @@
 #define GRAYSCALE_REG _R4
 
 enum {
-    SHADER_TEXINFO0 = SHADER_NOISE + 1,
+    SHADER_TEXINFO0 = SHADER_LOD_FRACTION + 1,
     SHADER_TEXINFO1,
     SHADER_MASKTEX0,
     SHADER_MASKTEX1,
     SHADER_BLENDTEX0,
     SHADER_BLENDTEX1,
+    // Detail/sharpen LOD inputs: the base texture's size, and its coordinate gradients (H in .xy, V in .zw).
+    SHADER_LODINFO,
+    SHADER_LODGRAD,
     SHADER_MAX,
 };
+
+// Detail/sharpen shaders compute LOD_FRACTION from both texture slots (TEXEL0 and TEXEL1).
+static bool needs_lod_fraction(const struct CCFeatures* cc_features) {
+    return cc_features->opt_lod_detail || cc_features->opt_lod_sharpen;
+}
+
+static bool computes_lod_fraction(const struct CCFeatures* cc_features) {
+    return needs_lod_fraction(cc_features) && cc_features->usedTextures[0] && cc_features->usedTextures[1];
+}
 
 #define REG_TABLE_UNUSED 0xff
 #define REG_TABLE_RESERVED 0xfe
@@ -111,6 +123,22 @@ static void reg_table_build(struct RegTable* tbl, struct CCFeatures* cc_features
         int reg = reg_table_find_free(tbl, true);
         assert(reg != -1);
         tbl->regs[reg] = SHADER_BLENDTEX1;
+    }
+
+    if (needs_lod_fraction(cc_features)) {
+        int reg = reg_table_find_free(tbl, true);
+        assert(reg != -1);
+        tbl->regs[reg] = SHADER_LOD_FRACTION;
+    }
+
+    if (computes_lod_fraction(cc_features)) {
+        int reg = reg_table_find_free(tbl, true);
+        assert(reg != -1);
+        tbl->regs[reg] = SHADER_LODINFO;
+
+        reg = reg_table_find_free(tbl, true);
+        assert(reg != -1);
+        tbl->regs[reg] = SHADER_LODGRAD;
     }
 
     // find the highest used reg
@@ -277,6 +305,69 @@ static void add_mix(struct RegTable* tbl, uint64_t** alu_ptr, uint8_t src0, uint
                       ALU_LAST, );
     }
 }
+// The RDP's magnified LOD for G_TD_DETAIL/G_TD_SHARPEN, with C1 = (prim LOD minimum, 2^LOD bias):
+// below one texel per pixel, LOD_FRACTION is the texel density floored at the prim LOD minimum
+// (minus one for sharpen, which extrapolates). Otherwise both texels become the trilinear chain
+// sample and the fraction is 0.
+static void add_lod_fraction(struct RegTable* tbl, uint64_t** alu_ptr, bool sharpen) {
+    uint8_t info = get_reg(tbl, SHADER_LODINFO);
+    uint8_t grad = get_reg(tbl, SHADER_LODGRAD);
+    uint8_t frac = get_reg(tbl, SHADER_LOD_FRACTION);
+    uint8_t tex0 = get_reg(tbl, SHADER_TEXEL0);
+    uint8_t tex1 = get_reg(tbl, SHADER_TEXEL1);
+
+    // ADD_INSTR declares a local, so each use below gets its own scope.
+    {
+        ADD_INSTR(
+            /* R127.xy = (float) lodinfo.xy */
+            ALU_INT_TO_FLT(_R127, _x, info, _x) SCL_210 ALU_LAST,
+
+            ALU_INT_TO_FLT(_R127, _y, info, _y) SCL_210 ALU_LAST,
+
+            /* PV = coordinate gradients in texels */
+            ALU_MUL(__, _x, grad, _x, _R127, _x), ALU_MUL(__, _y, grad, _y, _R127, _y),
+            ALU_MUL(__, _z, grad, _z, _R127, _x), ALU_MUL(__, _w, grad, _w, _R127, _y) ALU_LAST,
+
+            /* PV.x = the RDP's own measure: the largest s or t step to a neighbouring pixel */
+            ALU_MAX(__, _x, ALU_SRC_PV _ABS, _x, ALU_SRC_PV _ABS, _y),
+            ALU_MAX(__, _y, ALU_SRC_PV _ABS, _z, ALU_SRC_PV _ABS, _w) ALU_LAST,
+
+            ALU_MAX(__, _x, ALU_SRC_PV, _x, ALU_SRC_PV, _y) ALU_LAST,
+
+            /* R127.x = texels per pixel at native resolution = PV.x * 2^bias */
+            ALU_MUL(_R127, _x, ALU_SRC_PV, _x, _C(1), _y) ALU_LAST,
+
+            /* PV.x = max(texels per pixel, prim LOD min); R127.z = 1 - texels per pixel, > 0 when magnified */
+            ALU_MAX(__, _x, _R127, _x, _C(1), _x), ALU_ADD(_R127, _z, ALU_SRC_1, _x, _R127 _NEG, _x) ALU_LAST, );
+    }
+
+    if (sharpen) {
+        ADD_INSTR(ALU_ADD(__, _x, ALU_SRC_PV, _x, ALU_SRC_1 _NEG, _x) ALU_LAST, );
+    }
+
+    {
+        ADD_INSTR(
+            /* lodFraction = magnified ? PV.x : 0 */
+            ALU_CNDGT(frac, _x, _R127, _z, ALU_SRC_PV, _x, ALU_SRC_0, _x),
+            ALU_CNDGT(frac, _y, _R127, _z, ALU_SRC_PV, _x, ALU_SRC_0, _x),
+            ALU_CNDGT(frac, _z, _R127, _z, ALU_SRC_PV, _x, ALU_SRC_0, _x),
+            ALU_CNDGT(frac, _w, _R127, _z, ALU_SRC_PV, _x, ALU_SRC_0, _x) ALU_LAST, );
+    }
+
+    if (sharpen) {
+        /* texVal1 = magnified ? texVal1 (level 1) : texVal0 */
+        ADD_INSTR(ALU_CNDGT(tex1, _x, _R127, _z, tex1, _x, tex0, _x),
+                  ALU_CNDGT(tex1, _y, _R127, _z, tex1, _y, tex0, _y),
+                  ALU_CNDGT(tex1, _z, _R127, _z, tex1, _z, tex0, _z),
+                  ALU_CNDGT(tex1, _w, _R127, _z, tex1, _w, tex0, _w) ALU_LAST, );
+    } else {
+        /* texVal0 = magnified ? texVal0 (detail) : texVal1 */
+        ADD_INSTR(ALU_CNDGT(tex0, _x, _R127, _z, tex0, _x, tex1, _x),
+                  ALU_CNDGT(tex0, _y, _R127, _z, tex0, _y, tex1, _y),
+                  ALU_CNDGT(tex0, _z, _R127, _z, tex0, _z, tex1, _z),
+                  ALU_CNDGT(tex0, _w, _R127, _z, tex0, _w, tex1, _w) ALU_LAST, );
+    }
+}
 #undef ADD_INSTR
 
 static void append_tex_clamp(struct RegTable* tbl, uint64_t** alu_ptr, uint8_t tex, bool s, bool t) {
@@ -375,6 +466,14 @@ static GX2UniformVar uniformVars[] = {
         GX2_SHADER_VAR_TYPE_FLOAT2,
         1,
         0,
+        -1,
+    },
+    {
+        // x = prim LOD minimum, y = 2^LOD bias (add_lod_fraction() reads it as C1)
+        "lod_params",
+        GX2_SHADER_VAR_TYPE_FLOAT2,
+        1,
+        4,
         -1,
     },
 };
@@ -483,6 +582,14 @@ static int generatePixelShader(GX2PixelShader* psh, struct CCFeatures* cc_featur
         }
     }
 
+    if (computes_lod_fraction(cc_features)) {
+        add_lod_fraction(&reg_table, &cur_buf, cc_features->opt_lod_sharpen);
+    } else if (needs_lod_fraction(cc_features)) {
+        uint8_t frac = get_reg(&reg_table, SHADER_LOD_FRACTION);
+        ADD_INSTR(ALU_MOV(frac, _x, ALU_SRC_0, _x), ALU_MOV(frac, _y, ALU_SRC_0, _x), ALU_MOV(frac, _z, ALU_SRC_0, _x),
+                  ALU_MOV(frac, _w, ALU_SRC_0, _x) ALU_LAST, );
+    }
+
     // do noise calculation for SHADER_NOISE if necessary
     if (needs_noise) {
         memcpy(cur_buf, noise_instructions, sizeof(noise_instructions));
@@ -584,7 +691,7 @@ static int generatePixelShader(GX2PixelShader* psh, struct CCFeatures* cc_featur
 
     // tex
     uint32_t num_textures = 0;
-    uint32_t num_texinfo = texclamp[0] + texclamp[1];
+    uint32_t num_texinfo = texclamp[0] + texclamp[1] + (computes_lod_fraction(cc_features) ? 3 : 0);
 
     uint32_t texinfo_offset = ROUNDUP(main_alu1_offset + main_alu1_cnt, 16);
     uint32_t cur_tex_offset = texinfo_offset;
@@ -602,6 +709,25 @@ static int generatePixelShader(GX2PixelShader* psh, struct CCFeatures* cc_featur
                 cur_tex_offset += sizeof(texinfo_buf) / sizeof(uint64_t);
             }
         }
+    }
+
+    if (computes_lod_fraction(cc_features)) {
+        // Detail measures the LOD on the base texture in slot 1, sharpen on the chain in slot 0. Fetched
+        // here, before the texclamp ALU clamps the coordinates in place.
+        int lod_tex = cc_features->opt_lod_detail ? 1 : 0;
+        uint8_t coord_reg = (lod_tex == 0) ? _R1 : _R2;
+        uint8_t info_reg = get_reg(&reg_table, SHADER_LODINFO);
+        uint8_t grad_reg = get_reg(&reg_table, SHADER_LODGRAD);
+        int32_t loc = SHADER_FIRST_TEXTURE + lod_tex;
+
+        uint64_t lod_buf[] = {
+            TEX_GET_TEXTURE_INFO(info_reg, _x, _y, _m, _m, coord_reg, _0, _0, _0, _0, _t(loc), _s(loc)),
+            TEX_GET_GRADIENTS_H(grad_reg, _x, _y, _m, _m, coord_reg, _x, _y, _z, _x, _t(loc), _s(loc)),
+            TEX_GET_GRADIENTS_V(grad_reg, _m, _m, _x, _y, coord_reg, _x, _y, _z, _x, _t(loc), _s(loc)),
+        };
+
+        memcpy(program_buf + cur_tex_offset, lod_buf, sizeof(lod_buf));
+        cur_tex_offset += sizeof(lod_buf) / sizeof(uint64_t);
     }
 
     uint32_t texsample_offset = cur_tex_offset;
@@ -640,11 +766,20 @@ static int generatePixelShader(GX2PixelShader* psh, struct CCFeatures* cc_featur
             uint8_t dst_reg = get_reg(&reg_table, (i == 0) ? SHADER_TEXEL0 : SHADER_TEXEL1);
             int32_t loc = SHADER_FIRST_TEXTURE + i;
 
-            uint64_t tex_buf[] = { TEX_SAMPLE(dst_reg, _x, _y, _z, _w, texcoord_reg, _x, _y, _0, _x, _t(loc),
-                                              _s(loc)) };
+            if (i == 1 && cc_features->opt_lod_sharpen) {
+                // Sharpen extrapolates level 0 (slot 0) away from level 1 of the same chain (slot 1).
+                uint64_t tex_buf[] = { TEX_SAMPLE_L(dst_reg, _x, _y, _z, _w, texcoord_reg, _x, _y, _0, _1, _t(loc),
+                                                    _s(loc)) };
 
-            memcpy(program_buf + cur_tex_offset, tex_buf, sizeof(tex_buf));
-            cur_tex_offset += sizeof(tex_buf) / sizeof(uint64_t);
+                memcpy(program_buf + cur_tex_offset, tex_buf, sizeof(tex_buf));
+                cur_tex_offset += sizeof(tex_buf) / sizeof(uint64_t);
+            } else {
+                uint64_t tex_buf[] = { TEX_SAMPLE(dst_reg, _x, _y, _z, _w, texcoord_reg, _x, _y, _0, _x, _t(loc),
+                                                  _s(loc)) };
+
+                memcpy(program_buf + cur_tex_offset, tex_buf, sizeof(tex_buf));
+                cur_tex_offset += sizeof(tex_buf) / sizeof(uint64_t);
+            }
 
             num_textures++;
         }
@@ -657,9 +792,11 @@ static int generatePixelShader(GX2PixelShader* psh, struct CCFeatures* cc_featur
     // cf
     uint32_t cur_cf_offset = 0;
 
-    // if we use texclamp place those alus first
-    if (texclamp[0] || texclamp[1]) {
+    // texture info and LOD gradients first, then the texclamp alus that use them
+    if (num_texinfo > 0) {
         program_buf[cur_cf_offset++] = TEX(texinfo_offset, num_texinfo);
+    }
+    if (texclamp_alu_cnt > 0) {
         program_buf[cur_cf_offset++] = ALU(texclamp_alu_offset, texclamp_alu_cnt);
     }
 

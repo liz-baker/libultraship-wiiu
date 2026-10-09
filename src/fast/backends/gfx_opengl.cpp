@@ -93,6 +93,7 @@ void GfxRenderingAPIOGL::SetPerDrawUniforms() {
         glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
         glUniform1iv(mCurrentShaderProgram->texture_levels_location, 2, levels);
         glUniform1f(mCurrentShaderProgram->texture_lod_bias_location, mTextureLodBias);
+        glUniform1f(mCurrentShaderProgram->prim_lod_min_location, mPrimLodMin);
     }
 }
 
@@ -163,6 +164,8 @@ static const char* shader_item_to_str(uint32_t item, bool with_alpha, bool only_
             case SHADER_NOISE:
                 return with_alpha ? "vec4(" RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ")"
                                   : "vec3(" RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ")";
+            case SHADER_LOD_FRACTION:
+                return hint_single_element ? "lodFraction" : (with_alpha ? "vec4(lodFraction)" : "vec3(lodFraction)");
         }
     } else {
         switch (item) {
@@ -190,6 +193,8 @@ static const char* shader_item_to_str(uint32_t item, bool with_alpha, bool only_
                 return "texel.a";
             case SHADER_NOISE:
                 return RAND_NOISE;
+            case SHADER_LOD_FRACTION:
+                return "lodFraction";
         }
     }
     return "";
@@ -298,6 +303,8 @@ std::string GfxRenderingAPIOGL::BuildFsShader(const CCFeatures& cc_features) {
         { "SHADER_COMBINED", SHADER_COMBINED },
         { "SHADER_NOISE", SHADER_NOISE },
         { "o_three_point_filtering", mCurrentFilterMode == FILTER_THREE_POINT },
+        { "o_lod_detail", cc_features.opt_lod_detail },
+        { "o_lod_sharpen", cc_features.opt_lod_sharpen },
         { "append_formula", (InvokeFunc)append_formula },
 #ifdef __APPLE__
         { "GLSL_VERSION", "#version 410 core" },
@@ -527,6 +534,7 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
     prg->texture_filtering_location = glGetUniformLocation(shader_program, "texture_filtering");
     prg->texture_levels_location = glGetUniformLocation(shader_program, "texture_levels");
     prg->texture_lod_bias_location = glGetUniformLocation(shader_program, "texture_lod_bias");
+    prg->prim_lod_min_location = glGetUniformLocation(shader_program, "prim_lod_min");
 
     LoadShader(prg);
 
@@ -638,6 +646,10 @@ void GfxRenderingAPIOGL::ApplyMinFilter(const TextureInfo& tex) const {
 
 void GfxRenderingAPIOGL::SetTextureLodBias(float bias) {
     mTextureLodBias = bias;
+}
+
+void GfxRenderingAPIOGL::SetTexturePrimLodMin(float minLod) {
+    mPrimLodMin = minLod;
 }
 
 #ifdef USE_OPENGLES

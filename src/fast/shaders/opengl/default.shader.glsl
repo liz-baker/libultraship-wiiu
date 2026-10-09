@@ -130,6 +130,7 @@
     uniform int texture_filtering[2];
     uniform int texture_levels[2];
     uniform float texture_lod_bias;
+    uniform float prim_lod_min;
 
     #define TEX_OFFSET(off) @{texture}(tex, texCoord - off / texSize)
     #define WRAP(x, low, high) clamp((x), (low), (high))
@@ -234,6 +235,38 @@
 
                     texVal@{i} = mix(texVal@{i}, blendVal@{i}, maskVal@{i}.a);
                 @end
+            @end
+        @end
+
+        @if(o_lod_detail || o_lod_sharpen)
+            // The RDP's magnified LOD for G_TD_DETAIL/G_TD_SHARPEN: below one texel per pixel, the
+            // fraction is the texel density, floored at the prim LOD minimum (minus one for sharpen,
+            // which extrapolates). Otherwise both texels are the GPU's trilinear chain sample.
+            float lodFraction = 0.0;
+            @if(o_textures[0] && o_textures[1])
+                @if(o_lod_detail)
+                    vec2 lodCoord = vTexCoord1 * texSize1;
+                @else
+                    vec2 lodCoord = vTexCoord0 * texSize0;
+                    texVal1 = textureLod(uTex1, vTexCoordAdj1, 1.0);
+                @end
+                vec2 lodDx = dFdx(lodCoord);
+                vec2 lodDy = dFdy(lodCoord);
+                // The RDP's own measure: the largest s or t step to a neighbouring pixel.
+                vec2 lodStep = max(abs(lodDx), abs(lodDy));
+                float texelsPerPixel = max(lodStep.x, lodStep.y) * exp2(texture_lod_bias);
+                if (texelsPerPixel < 1.0) {
+                    lodFraction = max(texelsPerPixel, prim_lod_min);
+                    @if(o_lod_sharpen)
+                        lodFraction -= 1.0;
+                    @end
+                } else {
+                    @if(o_lod_detail)
+                        texVal0 = texVal1;
+                    @else
+                        texVal1 = texVal0;
+                    @end
+                }
             @end
         @end
 

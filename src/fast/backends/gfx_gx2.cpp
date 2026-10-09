@@ -13,6 +13,7 @@
 #include <malloc.h>
 #include <cassert>
 #include <algorithm>
+#include <cmath>
 #include <bit>
 #include <iterator>
 
@@ -113,6 +114,15 @@ void GfxRenderingAPIGX2::SetUniforms(ShaderProgram* prg) {
     float window_params_array[4] = { mNoiseScale, (float)mFrameCount, 0.0f, 0.0f };
 
     GX2SetPixelUniformReg(prg->window_params_offset, 4, window_params_array);
+    SetLodUniforms(prg);
+}
+
+void GfxRenderingAPIGX2::SetLodUniforms(ShaderProgram* prg) {
+    if (prg->lod_params_offset < 0) {
+        return;
+    }
+    float lod_params_array[4] = { mPrimLodMin, std::exp2(mTextureLodBias), 0.0f, 0.0f };
+    GX2SetPixelUniformReg(prg->lod_params_offset, 4, lod_params_array);
 }
 
 void GfxRenderingAPIGX2::UnloadShader(ShaderProgram* old_prg) {
@@ -154,6 +164,7 @@ ShaderProgram* GfxRenderingAPIGX2::CreateAndLoadNewShader(uint64_t shader_id0, u
     LoadShader(prg);
 
     prg->window_params_offset = GX2GetPixelUniformVarOffset(&prg->group.pixelShader, "window_params");
+    prg->lod_params_offset = GX2GetPixelUniformVarOffset(&prg->group.pixelShader, "lod_params");
     prg->samplers_location[0] = GX2GetPixelSamplerVarLocation(&prg->group.pixelShader, "uTex0");
     prg->samplers_location[1] = GX2GetPixelSamplerVarLocation(&prg->group.pixelShader, "uTex1");
     prg->samplers_location[2] = GX2GetPixelSamplerVarLocation(&prg->group.pixelShader, "uTexMask0");
@@ -411,11 +422,21 @@ void GfxRenderingAPIGX2::UploadTextureMipChain(const TextureMipLevel* levels, ui
     }
 }
 
+void GfxRenderingAPIGX2::SetTexturePrimLodMin(float minLod) {
+    mPrimLodMin = minLod;
+    if (mCurrentShaderProgram) {
+        SetLodUniforms(mCurrentShaderProgram);
+    }
+}
+
 void GfxRenderingAPIGX2::SetTextureLodBias(float bias) {
     if (bias == mTextureLodBias) {
         return;
     }
     mTextureLodBias = bias;
+    if (mCurrentShaderProgram) {
+        SetLodUniforms(mCurrentShaderProgram);
+    }
     // Rebuilds the bound mip chains' samplers with the new bias.
     for (int tile = 0; tile < SHADER_MAX_TEXTURES; tile++) {
         if (mBoundTextures[tile] != nullptr) {

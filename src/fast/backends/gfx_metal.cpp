@@ -451,7 +451,14 @@ void GfxRenderingAPIMetal::CreateSamplerState(TextureDataMetal* texture_data) {
 void GfxRenderingAPIMetal::SetTextureLodBias(float bias) {
     if (bias != mDrawUniforms.lodBias) {
         mDrawUniforms.lodBias = bias;
-        mLodBiasDirty = true;
+        mLodUniformsDirty = true;
+    }
+}
+
+void GfxRenderingAPIMetal::SetTexturePrimLodMin(float minLod) {
+    if (minLod != mDrawUniforms.primLodMin) {
+        mDrawUniforms.primLodMin = minLod;
+        mLodUniformsDirty = true;
     }
 }
 
@@ -591,11 +598,11 @@ void GfxRenderingAPIMetal::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, si
         }
     }
 
-    if (textures_changed || mPrimDepthDirty || mLodBiasDirty) {
+    if (textures_changed || mPrimDepthDirty || mLodUniformsDirty) {
         mDrawUniforms.prim_depth = mCurrentPrimDepth;
         current_framebuffer.mCommandEncoder->setFragmentBytes(&mDrawUniforms, sizeof(DrawUniforms), 1);
         mPrimDepthDirty = false;
-        mLodBiasDirty = false;
+        mLodUniformsDirty = false;
     }
 
     if (current_framebuffer.mLastShaderProgram != mShaderProgram) {

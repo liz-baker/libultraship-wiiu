@@ -64,7 +64,10 @@ enum {
     SHADER_TEXEL1A,
     SHADER_1,
     SHADER_COMBINED,
-    SHADER_NOISE
+    SHADER_NOISE,
+    // Per-pixel LOD_FRACTION for detail/sharpen textures (ShaderOpts::TEX_DETAIL/TEX_SHARPEN).
+    // Combiner items are 4 bits, so this is the last one that fits.
+    SHADER_LOD_FRACTION
 };
 
 #ifdef __cplusplus
@@ -86,6 +89,10 @@ enum class ShaderOpts {
     TEXEL0_BLEND,
     TEXEL1_BLEND,
     PRIM_DEPTH,
+    // G_TD_DETAIL / G_TD_SHARPEN: the shader computes LOD_FRACTION per pixel and swaps texels by
+    // magnification (issue #79).
+    TEX_DETAIL,
+    TEX_SHARPEN,
     PRISM_SHADER, // 16-bit width
     MAX
 };
@@ -119,6 +126,8 @@ struct CCFeatures {
     bool opt_invisible;
     bool opt_grayscale;
     bool opt_prim_depth;
+    bool opt_lod_detail;
+    bool opt_lod_sharpen;
     bool usedTextures[2];
     bool used_masks[2];
     bool used_blend[2];
@@ -142,8 +151,8 @@ class GfxWindowBackend;
 class Fast3dWindow;
 
 constexpr size_t MAX_SEGMENT_POINTERS = 16;
-constexpr size_t SHADER_ID_SHIFT = 17;
-constexpr int16_t ShaderIdUnmask(int id) {
+constexpr size_t SHADER_ID_SHIFT = static_cast<size_t>(ShaderOpts::PRISM_SHADER);
+constexpr int16_t ShaderIdUnmask(uint64_t id) {
     return (id >> SHADER_ID_SHIFT) & 0xFFFF;
 }
 
@@ -342,6 +351,9 @@ struct RDP {
     bool grayscale;
 
     uint8_t prim_lod_fraction;
+    // G_SETPRIMCOLOR's minimum LOD level, in 1/32 texel units: the floor of a detail or sharpen
+    // texture's LOD_FRACTION when magnified.
+    uint8_t prim_lod_min;
     uint16_t prim_depth;
     struct RGBA env_color, prim_color, fog_color, blend_color, fill_color, grayscale_color;
 
@@ -394,6 +406,8 @@ struct RenderingState {
     // Mip levels of the texture bound to each sampled slot, so a draw that switches between a mip
     // chain and a single level of the same tiles re-imports instead of reusing the other binding.
     uint8_t mip_levels[2];
+    // Last value handed to GfxRenderingAPI::SetTexturePrimLodMin(); negative until the first one.
+    float prim_lod_min = -1.0f;
 };
 
 struct FBInfo {

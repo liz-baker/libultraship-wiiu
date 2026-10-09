@@ -12,6 +12,7 @@ struct FrameUniforms {
 struct DrawUniforms {
     int textureFiltering[6];
     float lodBias;
+    float primLodMin;
     @if(o_prim_depth)
     float prim_depth;
     @end
@@ -243,6 +244,38 @@ fragment FragOut fragmentShader(
 
                 texVal@{i} = mix(texVal@{i}, blendVal@{i}, maskVal@{i}.w);
             @end
+        @end
+    @end
+
+    @if(o_lod_detail || o_lod_sharpen)
+        // The RDP's magnified LOD for G_TD_DETAIL/G_TD_SHARPEN: below one texel per pixel, the
+        // fraction is the texel density, floored at the prim LOD minimum (minus one for sharpen,
+        // which extrapolates). Otherwise both texels are the GPU's trilinear chain sample.
+        float lodFraction = 0.0;
+        @if(o_textures[0] && o_textures[1])
+            @if(o_lod_detail)
+                float2 lodCoord = in.texCoord1 * texSize1;
+            @else
+                float2 lodCoord = in.texCoord0 * texSize0;
+                texVal1 = uTex1.sample(uTex1Smplr, vTexCoordAdj1, level(1.0));
+            @end
+            float2 lodDx = dfdx(lodCoord);
+            float2 lodDy = dfdy(lodCoord);
+            // The RDP's own measure: the largest s or t step to a neighbouring pixel.
+            float2 lodStep = max(abs(lodDx), abs(lodDy));
+            float texelsPerPixel = max(lodStep.x, lodStep.y) * exp2(drawUniforms.lodBias);
+            if (texelsPerPixel < 1.0) {
+                lodFraction = max(texelsPerPixel, drawUniforms.primLodMin);
+                @if(o_lod_sharpen)
+                    lodFraction -= 1.0;
+                @end
+            } else {
+                @if(o_lod_detail)
+                    texVal0 = texVal1;
+                @else
+                    texVal1 = texVal0;
+                @end
+            }
         @end
     @end
     

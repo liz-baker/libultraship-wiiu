@@ -87,9 +87,10 @@ TEST_F(ResolveMipChainTest, NoChainInOneCycleMode) {
     EXPECT_EQ(ResolveMipChain(rdp, 0, 3).numLevels, 0);
 }
 
-TEST_F(ResolveMipChainTest, DetailModeIsLeftForIssue79) {
+TEST_F(ResolveMipChainTest, DetailModeLeavesTheBaseTileToTheCaller) {
+    // In G_TD_DETAIL mode the interpreter passes the tile after the detail tile as the base.
     rdp.other_mode_h |= G_TD_DETAIL;
-    EXPECT_EQ(ResolveMipChain(rdp, 0, 3).numLevels, 0);
+    EXPECT_EQ(ResolveMipChain(rdp, 0, 3).numLevels, 4);
 }
 
 TEST_F(ResolveMipChainTest, TruncatesAtALevelThatDoesNotHalve) {

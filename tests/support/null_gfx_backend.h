@@ -53,6 +53,7 @@ class NullGfxRenderingAPI final : public GfxRenderingAPI {
     std::vector<Draw> draws;
     std::vector<uint32_t> deletedTextures;
     std::vector<float> lodBiasCalls;
+    std::vector<float> primLodMinCalls;
 
     void ClearRecording() {
         uploads.clear();
@@ -61,6 +62,7 @@ class NullGfxRenderingAPI final : public GfxRenderingAPI {
         draws.clear();
         deletedTextures.clear();
         lodBiasCalls.clear();
+        primLodMinCalls.clear();
     }
 
     const char* GetName() override {
@@ -141,6 +143,9 @@ class NullGfxRenderingAPI final : public GfxRenderingAPI {
     }
     void SetTextureLodBias(float bias) override {
         lodBiasCalls.push_back(bias);
+    }
+    void SetTexturePrimLodMin(float minLod) override {
+        primLodMinCalls.push_back(minLod);
     }
     void SetSamplerParameters(int sampler, bool linear_filter, uint32_t cms, uint32_t cmt) override {
         uint32_t textureId = (sampler >= 0 && sampler < SHADER_MAX_TEXTURES) ? mSelected[sampler] : 0;

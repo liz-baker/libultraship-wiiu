@@ -67,6 +67,7 @@ cbuffer PerFrameCB : register(b0) {
     uint noise_frame;
     float noise_scale;
     float lod_bias;
+    float prim_lod_min;
 }
 
 float random(in float3 value) {
@@ -284,6 +285,41 @@ PSOutput PSMain(PSInput input, float4 screenSpace : SV_Position) {
                     texVal@{i} = lerp(texVal@{i}, blendVal@{i}, g_textureMask@{i}.Sample(g_sampler@{i}, tc@{i}).a);
                 @end
             @end
+        @end
+    @end
+
+    @if(o_lod_detail || o_lod_sharpen)
+        // The RDP's magnified LOD for G_TD_DETAIL/G_TD_SHARPEN: below one texel per pixel, the
+        // fraction is the texel density, floored at the prim LOD minimum (minus one for sharpen,
+        // which extrapolates). Otherwise both texels are the GPU's trilinear chain sample.
+        float lodFraction = 0.0;
+        @if(o_textures[0] && o_textures[1])
+            float2 lodTexSize;
+            @if(o_lod_detail)
+                g_texture1.GetDimensions(lodTexSize.x, lodTexSize.y);
+                float2 lodCoord = input.uv1 * lodTexSize;
+            @else
+                g_texture0.GetDimensions(lodTexSize.x, lodTexSize.y);
+                float2 lodCoord = input.uv0 * lodTexSize;
+                texVal1 = g_texture1.SampleLevel(g_sampler1, tc1, 1.0);
+            @end
+            float2 lodDx = ddx(lodCoord);
+            float2 lodDy = ddy(lodCoord);
+            // The RDP's own measure: the largest s or t step to a neighbouring pixel.
+            float2 lodStep = max(abs(lodDx), abs(lodDy));
+            float texelsPerPixel = max(lodStep.x, lodStep.y) * exp2(lod_bias);
+            if (texelsPerPixel < 1.0) {
+                lodFraction = max(texelsPerPixel, prim_lod_min);
+                @if(o_lod_sharpen)
+                    lodFraction -= 1.0;
+                @end
+            } else {
+                @if(o_lod_detail)
+                    texVal0 = texVal1;
+                @else
+                    texVal1 = texVal0;
+                @end
+            }
         @end
     @end
 

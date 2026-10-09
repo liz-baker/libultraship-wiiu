@@ -688,6 +688,18 @@ void GfxRenderingAPIDX11::SetTextureLodBias(float bias) {
         return;
     }
     mPerFrameCbData.lod_bias = bias;
+    UploadPerFrameCb();
+}
+
+void GfxRenderingAPIDX11::SetTexturePrimLodMin(float minLod) {
+    if (minLod == mPerFrameCbData.prim_lod_min) {
+        return;
+    }
+    mPerFrameCbData.prim_lod_min = minLod;
+    UploadPerFrameCb();
+}
+
+void GfxRenderingAPIDX11::UploadPerFrameCb() {
     D3D11_MAPPED_SUBRESOURCE ms;
     ZeroMemory(&ms, sizeof(D3D11_MAPPED_SUBRESOURCE));
     mContext->Map(mPerFrameCb.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms);
@@ -1355,6 +1367,10 @@ static const char* prism_shader_item_to_str(uint32_t item, bool with_alpha, bool
             case SHADER_NOISE:
                 return with_alpha ? "float4(" RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ")"
                                   : "float3(" RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ")";
+            case SHADER_LOD_FRACTION:
+                return hint_single_element ? "lodFraction"
+                                           : (with_alpha ? "float4(lodFraction, lodFraction, lodFraction, lodFraction)"
+                                                         : "float3(lodFraction, lodFraction, lodFraction)");
         }
     } else {
         switch (item) {
@@ -1383,6 +1399,8 @@ static const char* prism_shader_item_to_str(uint32_t item, bool with_alpha, bool
                 return "texel.a";
             case SHADER_NOISE:
                 return RAND_NOISE;
+            case SHADER_LOD_FRACTION:
+                return "lodFraction";
         }
     }
 }
@@ -1500,6 +1518,8 @@ std::string gfx_direct3d_common_build_shader(size_t& numFloats, const CCFeatures
         { "o_color_alpha_same", M_ARRAY(cc_features.color_alpha_same, bool, 2) },
         { "o_root_signature", include_root_signature },
         { "o_three_point_filtering", three_point_filtering },
+        { "o_lod_detail", cc_features.opt_lod_detail },
+        { "o_lod_sharpen", cc_features.opt_lod_sharpen },
         { "srgb_mode", use_srgb },
         { "append_formula", (InvokeFunc)prism_append_formula },
         { "update_floats", (InvokeFunc)update_raw_floats },
