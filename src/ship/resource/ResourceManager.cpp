@@ -4,7 +4,9 @@
 #include "ship/resource/File.h"
 #include "ship/resource/archive/Archive.h"
 #include <algorithm>
+#include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <stdexcept>
 #include "ship/utils/StringHelper.h"
 #include "ship/utils/Utils.h"
@@ -13,6 +15,33 @@
 #include "ship/thread/ThreadPool.h"
 
 namespace Ship {
+
+namespace {
+// Threads currently inside LoadResourceProcess. A load requested from one of them runs inline: queueing it on the
+// pool and waiting deadlocks once every worker is waiting, which a one-worker pool does at once. Workers can't be told
+// apart through BS::this_thread::get_pool(), which reports nothing on the Wii U.
+std::mutex sLoadingMutex;
+std::unordered_map<std::thread::id, int> sLoadingThreads;
+
+struct LoadingScope {
+    LoadingScope() {
+        const std::lock_guard<std::mutex> lock(sLoadingMutex);
+        sLoadingThreads[std::this_thread::get_id()]++;
+    }
+    ~LoadingScope() {
+        const std::lock_guard<std::mutex> lock(sLoadingMutex);
+        auto it = sLoadingThreads.find(std::this_thread::get_id());
+        if (--it->second == 0) {
+            sLoadingThreads.erase(it);
+        }
+    }
+};
+
+bool IsLoadingOnThisThread() {
+    const std::lock_guard<std::mutex> lock(sLoadingMutex);
+    return sLoadingThreads.contains(std::this_thread::get_id());
+}
+} // namespace
 
 ResourceFilter::ResourceFilter(const std::list<std::string>& includeMasks, const std::list<std::string>& excludeMasks,
                                const uintptr_t owner, const std::shared_ptr<Archive> parent)
@@ -135,6 +164,7 @@ std::shared_ptr<ResourceInitData> ResourceManager::ResolveMetaAlias(const Resour
 
 std::shared_ptr<IResource> ResourceManager::LoadResourceProcess(const ResourceIdentifier& identifier, bool loadExact,
                                                                 std::shared_ptr<ResourceInitData> initData) {
+    LoadingScope loading;
     if (initData != nullptr) {
         initData->Identifier = identifier;
     }
@@ -293,7 +323,8 @@ ResourceManager::LoadResourceAsync(const std::string& filePath, bool loadExact, 
 
 std::shared_ptr<IResource> ResourceManager::LoadResource(const ResourceIdentifier& identifier, bool loadExact,
                                                          std::shared_ptr<ResourceInitData> initData) {
-    auto resource = LoadResourceAsync(identifier, loadExact, BS::pr::highest, initData).get();
+    auto resource = IsLoadingOnThisThread() ? LoadResourceProcess(identifier, loadExact, initData)
+                                            : LoadResourceAsync(identifier, loadExact, BS::pr::highest, initData).get();
     if (resource == nullptr) {
         if (identifier.IsPath()) {
             SPDLOG_TRACE("Failed to load resource file at path {}", identifier.GetPath());
