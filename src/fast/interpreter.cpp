@@ -753,6 +753,12 @@ MipChain ResolveMipChain(const RDP& rdp, uint8_t baseTile, uint8_t maxLevel) {
         if (width == 0 || height == 0) {
             break;
         }
+        // Nothing follows a one texel level: a texture can't have more levels than its size halves
+        // through, and backends such as Metal reject a descriptor that asks for more. Two one texel
+        // tiles in a row (a base-only image set on tiles 0 and 1) are not a chain.
+        if (n > 0 && prevWidth == 1 && prevHeight == 1) {
+            break;
+        }
         if (n > 0 && (width != std::max(1u, prevWidth / 2) || height != std::max(1u, prevHeight / 2))) {
             break;
         }
