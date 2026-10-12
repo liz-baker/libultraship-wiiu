@@ -155,9 +155,11 @@ class GfxRenderingAPIGX2 final : public GfxRenderingAPI {
     float mNoiseScale = 0.0f;
     FilteringMode mFilterMode = FILTER_LINEAR;
 
-    BOOL mDepthTest = TRUE;
-    BOOL mDepthWrite = TRUE;
-    GX2CompareFunction mDepthCompareFunction = GX2_COMPARE_FUNC_LESS;
+    // Must match the interpreter's initial RenderingState (depth off), which only calls
+    // SetDepthTestAndMask() when its wanted state differs from that record.
+    BOOL mDepthTest = FALSE;
+    BOOL mDepthWrite = FALSE;
+    GX2CompareFunction mDepthCompareFunction = GX2_COMPARE_FUNC_ALWAYS;
 
     float mViewportX = 0.0f;
     float mViewportY = 0.0f;
