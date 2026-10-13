@@ -9,9 +9,11 @@
 #include <cstddef>
 #include <map>
 #include <utility>
+#include <vector>
 
 #include "gfx_rendering_api.h"
 
+#include <gx2/event.h>
 #include <gx2/texture.h>
 #include <gx2/sampler.h>
 #include <gx2/surface.h>
@@ -147,6 +149,26 @@ class GfxRenderingAPIGX2 final : public GfxRenderingAPI {
     // Texture/sampler last bound per shader sampler slot, so StartFrame() can rebind them after
     // ImGui's GX2 pass clobbers the same hardware slots (see BindTextureSlot()).
     std::array<Texture*, SHADER_MAX_TEXTURES> mBoundTextures{};
+
+    // Texture surface memory that has been replaced or deleted but may still be read by queued draws
+    // (a draw binds its texture by address when recorded). Freed once the GPU retires the frame.
+    struct RetiredImage {
+        void* image;
+        size_t bytes;
+        // GX2GetLastSubmittedTimeStamp() once the frame that last recorded a draw with it was submitted.
+        OSTime timestamp;
+        bool stamped;
+    };
+    std::vector<RetiredImage> mRetiredImages;
+    size_t mRetiredBytes = 0;
+    // Waiting for the GPU past this much held-back memory keeps a frame of heavy re-uploads bounded.
+    static constexpr size_t RETIRED_BYTES_LIMIT = 16 * 1024 * 1024;
+
+    void RetireImage(void* image, size_t bytes);
+    void FreeRetiredImagesNow();
+    void* AllocTextureMemory(size_t alignment, size_t size);
+    void StampRetiredImages();
+    void ReclaimRetiredImages();
 
     uint8_t* mDrawBuffer = nullptr;
     uint8_t* mDrawPtr = nullptr;
