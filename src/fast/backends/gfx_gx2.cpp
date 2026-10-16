@@ -200,6 +200,66 @@ uint32_t GfxRenderingAPIGX2::NewTexture() {
     return (uint32_t)tex;
 }
 
+// Bytes of memory behind a texture surface: the base image plus its mip levels.
+static size_t TextureImageBytes(const GX2Surface& surface) {
+    return surface.image ? (size_t)surface.imageSize + surface.mipmapSize + surface.alignment : 0;
+}
+
+void GfxRenderingAPIGX2::RetireImage(void* image, size_t bytes) {
+    if (!image) {
+        return;
+    }
+    mRetiredImages.push_back({ image, bytes, 0, false });
+    mRetiredBytes += bytes;
+    if (mRetiredBytes > RETIRED_BYTES_LIMIT) {
+        FreeRetiredImagesNow();
+    }
+}
+
+void GfxRenderingAPIGX2::FreeRetiredImagesNow() {
+    // GX2DrawDone() submits everything recorded so far and waits for it, after which nothing in the
+    // queue can still read any of these.
+    GX2DrawDone();
+    for (auto& retired : mRetiredImages) {
+        free(retired.image);
+    }
+    mRetiredImages.clear();
+    mRetiredBytes = 0;
+}
+
+void* GfxRenderingAPIGX2::AllocTextureMemory(size_t alignment, size_t size) {
+    void* mem = memalign(alignment, size);
+    if (!mem && !mRetiredImages.empty()) {
+        // Memory held back for the GPU may be what ran out.
+        FreeRetiredImagesNow();
+        mem = memalign(alignment, size);
+    }
+    assert(mem);
+    return mem;
+}
+
+void GfxRenderingAPIGX2::StampRetiredImages() {
+    OSTime submitted = GX2GetLastSubmittedTimeStamp();
+    for (auto& retired : mRetiredImages) {
+        if (!retired.stamped) {
+            retired.timestamp = submitted;
+            retired.stamped = true;
+        }
+    }
+}
+
+void GfxRenderingAPIGX2::ReclaimRetiredImages() {
+    OSTime retiredTimestamp = GX2GetRetiredTimeStamp();
+    size_t reclaimed = 0;
+    while (reclaimed < mRetiredImages.size() && mRetiredImages[reclaimed].stamped &&
+           mRetiredImages[reclaimed].timestamp <= retiredTimestamp) {
+        free(mRetiredImages[reclaimed].image);
+        mRetiredBytes -= mRetiredImages[reclaimed].bytes;
+        reclaimed++;
+    }
+    mRetiredImages.erase(mRetiredImages.begin(), mRetiredImages.begin() + reclaimed);
+}
+
 void GfxRenderingAPIGX2::DeleteTexture(uint32_t texture_id) {
     Texture* tex = (Texture*)texture_id;
 
@@ -213,9 +273,7 @@ void GfxRenderingAPIGX2::DeleteTexture(uint32_t texture_id) {
         mCurrentTexture = nullptr;
     }
 
-    if (tex->texture.surface.image) {
-        free(tex->texture.surface.image);
-    }
+    RetireImage(tex->texture.surface.image, TextureImageBytes(tex->texture.surface));
 
     free((void*)tex);
 }
@@ -253,14 +311,15 @@ void GfxRenderingAPIGX2::UploadTexture(const uint8_t* rgba32_buf, uint32_t width
 
     // Texture ids are recycled: a previous mip chain on this one needs a single-level surface.
     bool hadMipChain = tex->texture.surface.mipLevels > 1;
-    if ((tex->texture.surface.width != width) || (tex->texture.surface.height != height) ||
-        !tex->texture.surface.image || hadMipChain) {
+    bool resized = (tex->texture.surface.width != width) || (tex->texture.surface.height != height) ||
+                   !tex->texture.surface.image || hadMipChain;
 
-        if (tex->texture.surface.image) {
-            free(tex->texture.surface.image);
-            tex->texture.surface.image = nullptr;
-        }
+    // Draws already recorded bound the old memory by address and may not have run yet, so the new
+    // pixels go into fresh memory and the old is freed once the GPU has retired those draws.
+    void* oldImage = tex->texture.surface.image;
+    size_t oldBytes = TextureImageBytes(tex->texture.surface);
 
+    if (resized) {
         memset(&tex->texture, 0, sizeof(GX2Texture));
         tex->texture.surface.use = GX2_SURFACE_USE_TEXTURE;
         tex->texture.surface.dim = GX2_SURFACE_DIM_TEXTURE_2D;
@@ -279,9 +338,10 @@ void GfxRenderingAPIGX2::UploadTexture(const uint8_t* rgba32_buf, uint32_t width
 
         GX2CalcSurfaceSizeAndAlignment(&tex->texture.surface);
         GX2InitTextureRegs(&tex->texture);
-
-        tex->texture.surface.image = memalign(tex->texture.surface.alignment, tex->texture.surface.imageSize);
     }
+
+    tex->texture.surface.image = AllocTextureMemory(tex->texture.surface.alignment, tex->texture.surface.imageSize);
+    RetireImage(oldImage, oldBytes);
 
     uint8_t* buf = (uint8_t*)tex->texture.surface.image;
     assert(buf);
@@ -358,10 +418,8 @@ void GfxRenderingAPIGX2::UploadTextureMipChain(const TextureMipLevel* levels, ui
         return;
     }
 
-    if (tex->texture.surface.image) {
-        free(tex->texture.surface.image);
-        tex->texture.surface.image = nullptr;
-    }
+    RetireImage(tex->texture.surface.image, TextureImageBytes(tex->texture.surface));
+    tex->texture.surface.image = nullptr;
 
     memset(&tex->texture, 0, sizeof(GX2Texture));
     GX2Surface& surface = tex->texture.surface;
@@ -385,8 +443,7 @@ void GfxRenderingAPIGX2::UploadTextureMipChain(const TextureMipLevel* levels, ui
 
     // One allocation: level 0 at `image`, the rest from `mipmaps`, which free(image) releases with it.
     uint32_t mipmapsOffset = (surface.imageSize + surface.alignment - 1) & ~(surface.alignment - 1);
-    uint8_t* image = (uint8_t*)memalign(surface.alignment, mipmapsOffset + surface.mipmapSize);
-    assert(image);
+    uint8_t* image = (uint8_t*)AllocTextureMemory(surface.alignment, mipmapsOffset + surface.mipmapSize);
     surface.image = image;
     surface.mipmaps = image + mipmapsOffset;
 
@@ -653,6 +710,8 @@ void GfxRenderingAPIGX2::OnResize() {
 }
 
 void GfxRenderingAPIGX2::StartFrame() {
+    ReclaimRetiredImages();
+
     // Restore state since ImGui modified it when rendering
     GX2SetViewport(mViewportX, mViewportY, mViewportWidth, mViewportHeight, 0.0f, 1.0f);
     GX2SetScissor(mScissorX, mScissorY, mScissorWidth, mScissorHeight);
@@ -703,6 +762,10 @@ void GfxRenderingAPIGX2::EndFrame() {
 
     GX2CopyColorBufferToScanBuffer(&main_framebuffer.color_buffer, GX2_SCAN_TARGET_TV);
     GX2CopyColorBufferToScanBuffer(&main_framebuffer.color_buffer, GX2_SCAN_TARGET_DRC);
+
+    // Submit the frame's draws so the timestamp covers every one that read a texture retired in it.
+    GX2Flush();
+    StampRetiredImages();
 }
 
 void GfxRenderingAPIGX2::FinishRender() {

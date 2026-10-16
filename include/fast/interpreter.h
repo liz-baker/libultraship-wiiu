@@ -419,10 +419,14 @@ struct MaskedTextureEntry {
     uint8_t* replacementData;
 };
 
-// One level of a G_TL_LOD mip chain: the render tile holding it and its size in texels.
+// One level of a G_TL_LOD mip chain: the render tile holding it and its size in texels. A game may
+// round each halving up (5 -> 3 -> 2 -> 1) where the GPU rounds down (5 -> 2 -> 1), so `width` x
+// `height` is the size the tile holds and `gpuWidth` x `gpuHeight` the size the level is uploaded
+// at; the two differ by at most one texel per axis.
 struct MipChainLevel {
     uint8_t tile;
     uint32_t width, height;
+    uint32_t gpuWidth, gpuHeight;
 };
 
 // The RDP's tile field is 3 bits, so a chain can't span more than the 8 tiles.

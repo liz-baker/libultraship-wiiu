@@ -113,8 +113,52 @@ TEST_F(ResolveMipChainTest, NothingFollowsTheOneTexelLevel) {
 }
 
 TEST_F(ResolveMipChainTest, TruncatesAtALevelThatDoesNotHalve) {
-    SetTileSizeTexels(rdp, 2, 3, 2);
+    SetTileSizeTexels(rdp, 2, 4, 2);
     EXPECT_EQ(ResolveMipChain(rdp, 0, 3).numLevels, 2);
+}
+
+// Issue #84: a game that rounds each halving up (5 -> 3 -> 2 -> 1) where the GPU rounds down
+// (5 -> 2 -> 1). The tiles keep the game's sizes; the level carries the size to upload at.
+TEST_F(ResolveMipChainTest, AcceptsLevelsThatRoundUp) {
+    const uint32_t sizes[4] = { 5, 3, 2, 1 };
+    for (uint8_t n = 0; n < 4; n++) {
+        SetTileSizeTexels(rdp, n, sizes[n], sizes[n]);
+    }
+    MipChain chain = ResolveMipChain(rdp, 0, 3);
+    // The GPU's chain for a 5 texel base ends at 1 after two halvings, so the fourth tile is dropped.
+    ASSERT_EQ(chain.numLevels, 3);
+    const uint32_t expectedGpu[3] = { 5, 2, 1 };
+    for (uint8_t n = 0; n < 3; n++) {
+        SCOPED_TRACE(n);
+        EXPECT_EQ(chain.levels[n].width, sizes[n]);
+        EXPECT_EQ(chain.levels[n].height, sizes[n]);
+        EXPECT_EQ(chain.levels[n].gpuWidth, expectedGpu[n]);
+        EXPECT_EQ(chain.levels[n].gpuHeight, expectedGpu[n]);
+    }
+}
+
+TEST_F(ResolveMipChainTest, RoundsUpInOneAxisOnly) {
+    SetTileSizeTexels(rdp, 0, 5, 8);
+    SetTileSizeTexels(rdp, 1, 3, 4);
+    MipChain chain = ResolveMipChain(rdp, 0, 1);
+    ASSERT_EQ(chain.numLevels, 2);
+    EXPECT_EQ(chain.levels[1].gpuWidth, 2u);
+    EXPECT_EQ(chain.levels[1].gpuHeight, 4u);
+}
+
+TEST_F(ResolveMipChainTest, ExactHalvingLevelsUploadAtTheirOwnSize) {
+    MipChain chain = ResolveMipChain(rdp, 0, 3);
+    ASSERT_EQ(chain.numLevels, 4);
+    for (uint8_t n = 0; n < 4; n++) {
+        EXPECT_EQ(chain.levels[n].gpuWidth, chain.levels[n].width);
+        EXPECT_EQ(chain.levels[n].gpuHeight, chain.levels[n].height);
+    }
+}
+
+TEST_F(ResolveMipChainTest, RejectsALevelTwoTexelsOffTheGpuSize) {
+    SetTileSizeTexels(rdp, 0, 8, 8);
+    SetTileSizeTexels(rdp, 1, 6, 4);
+    EXPECT_EQ(ResolveMipChain(rdp, 0, 1).numLevels, 0);
 }
 
 TEST_F(ResolveMipChainTest, NoChainWhenTheFirstLowerLevelDoesNotHalve) {
@@ -437,6 +481,92 @@ TEST_F(FourBitChainDrawTest, EachTileReadsItsOwnRows) {
     ASSERT_EQ(h.rapi.uploads.size(), 2u);
     ExpectIntensity(h.rapi.uploads[0], levels[0].width, 1);
     ExpectIntensity(h.rapi.uploads[1], levels[1].width, 2);
+}
+
+// A 5x5 RGBA16 chain whose levels round each halving up (5, 3, 2, 1), loaded by one block. The GPU
+// halves down (5, 2, 1), so the uploaded levels are resampled and the last tile is dropped.
+class RoundedUpChainDrawTest : public testing::Test {
+  protected:
+    struct Level {
+        uint32_t size, tmemWords, lineWords;
+    };
+    static constexpr std::array<Level, 4> kLevels = { { { 5, 0, 2 }, { 3, 10, 1 }, { 2, 13, 1 }, { 1, 15, 1 } } };
+    static constexpr uint32_t kWords = 16;
+
+    void SetUp() override {
+        for (size_t n = 0; n < kLevels.size(); n++) {
+            for (uint32_t y = 0; y < kLevels[n].size; y++) {
+                for (uint32_t x = 0; x < kLevels[n].size; x++) {
+                    size_t byte = kLevels[n].tmemWords * 8 + y * kLevels[n].lineWords * 8 + x * 2;
+                    texels[byte] = kLevelColors[n] >> 8;
+                    texels[byte + 1] = kLevelColors[n] & 0xFF;
+                }
+            }
+        }
+        for (int i = 0; i < 3; i++) {
+            vtx[i].v.cn[3] = 255;
+        }
+        vtx[1].v.ob[0] = 1;
+        vtx[2].v.ob[1] = 1;
+    }
+
+    void Run() {
+        std::vector<Gfx> dl = {
+            gsSPMatrix(&identity, G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH),
+            gsSPMatrix(&identity, G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH),
+            gsSPClearGeometryMode(G_CULL_BOTH | G_LIGHTING | G_FOG),
+            gsDPSetCycleType(G_CYC_2CYCLE),
+            gsDPSetTextureLOD(G_TL_LOD),
+            gsDPSetTextureDetail(G_TD_CLAMP),
+            gsDPSetCombineMode(G_CC_TRILERP, G_CC_TRILERP),
+            gsSPTexture(0xFFFF, 0xFFFF, 3, G_TX_RENDERTILE, G_ON),
+            gsDPSetTextureImage(G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, texels.data()),
+            gsDPSetTile(G_IM_FMT_RGBA, G_IM_SIZ_16b, 0, 0, G_TX_LOADTILE, 0, 0, 0, 0, 0, 0, 0),
+            gsDPLoadSync(),
+            gsDPLoadBlock(G_TX_LOADTILE, 0, 0, kWords * 4 - 1, 0),
+            gsDPPipeSync(),
+        };
+        for (uint8_t n = 0; n < kLevels.size(); n++) {
+            const auto& level = kLevels[n];
+            dl.push_back(gsDPSetTile(G_IM_FMT_RGBA, G_IM_SIZ_16b, level.lineWords, level.tmemWords, n, 0, G_TX_CLAMP, 0,
+                                     n, G_TX_CLAMP, 0, n));
+            dl.push_back(gsDPSetTileSize(n, 0, 0, (level.size - 1) << G_TEXTURE_IMAGE_FRAC,
+                                         (level.size - 1) << G_TEXTURE_IMAGE_FRAC));
+        }
+        dl.push_back(gsSPVertex(vtx, 3, 0));
+        dl.push_back(gsSP1Triangle(0, 1, 2, 0));
+        dl.push_back(gsSPEndDisplayList());
+        h.Run(dl.data());
+    }
+
+    NullBackendInterpreter h;
+    FixedMtx identity = IdentityMtx();
+    Vtx vtx[3] = {};
+    std::array<uint8_t, kWords * 8> texels{};
+};
+
+TEST_F(RoundedUpChainDrawTest, UploadsEveryLevelAtTheGpuSize) {
+    Run();
+
+    ASSERT_EQ(h.rapi.uploads.size(), 1u);
+    const auto& up = h.rapi.uploads[0];
+    EXPECT_EQ(up.width, 5u);
+    EXPECT_EQ(up.height, 5u);
+    ASSERT_EQ(up.lowerLevels.size(), 2u);
+    const uint32_t gpuSizes[2] = { 2, 1 };
+    for (size_t n = 0; n < 2; n++) {
+        SCOPED_TRACE(n);
+        const auto& level = up.lowerLevels[n];
+        ASSERT_EQ(level.width, gpuSizes[n]);
+        ASSERT_EQ(level.height, gpuSizes[n]);
+        ASSERT_EQ(level.rgba32.size(), (size_t)gpuSizes[n] * gpuSizes[n] * 4);
+        // Every source texel in a level is the same colour, so the resample keeps it.
+        for (size_t p = 0; p < (size_t)gpuSizes[n] * gpuSizes[n]; p++) {
+            for (int c = 0; c < 4; c++) {
+                ASSERT_EQ(level.rgba32[p * 4 + c], kLevelRgba[n + 1][c]) << "texel " << p << " channel " << c;
+            }
+        }
+    }
 }
 
 // A paletted 8-bit chain whose base level is 33 texels wide, so its rows are padded to 40 bytes: the

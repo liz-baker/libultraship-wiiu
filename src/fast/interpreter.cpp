@@ -734,8 +734,8 @@ MipChain ResolveMipChain(const RDP& rdp, uint8_t baseTile, uint8_t maxLevel) {
         return chain;
     }
 
-    uint32_t prevWidth = 0;
-    uint32_t prevHeight = 0;
+    uint32_t gpuWidth = 0;
+    uint32_t gpuHeight = 0;
     for (uint32_t n = 0; n <= maxLevel && n < MAX_MIP_CHAIN_LEVELS; n++) {
         uint8_t t = (baseTile + n) & 7;
         const auto& tile = rdp.texture_tile[t];
@@ -756,11 +756,20 @@ MipChain ResolveMipChain(const RDP& rdp, uint8_t baseTile, uint8_t maxLevel) {
         // Nothing follows a one texel level: a texture can't have more levels than its size halves
         // through, and backends such as Metal reject a descriptor that asks for more. Two one texel
         // tiles in a row (a base-only image set on tiles 0 and 1) are not a chain.
-        if (n > 0 && prevWidth == 1 && prevHeight == 1) {
+        if (n > 0 && gpuWidth == 1 && gpuHeight == 1) {
             break;
         }
-        if (n > 0 && (width != std::max(1u, prevWidth / 2) || height != std::max(1u, prevHeight / 2))) {
-            break;
+        if (n == 0) {
+            gpuWidth = width;
+            gpuHeight = height;
+        } else {
+            // The GPU halves rounding down; a level a texel larger in an axis is a game that rounded
+            // up, and ImportMipChain resamples it to the GPU size.
+            gpuWidth = std::max(1u, gpuWidth / 2);
+            gpuHeight = std::max(1u, gpuHeight / 2);
+            if ((width != gpuWidth && width != gpuWidth + 1) || (height != gpuHeight && height != gpuHeight + 1)) {
+                break;
+            }
         }
         const auto& loaded = rdp.loaded_texture[tile.tmem_index];
         uint32_t rowBytes = TexelRowBytes(tile.siz, width);
@@ -771,10 +780,8 @@ MipChain ResolveMipChain(const RDP& rdp, uint8_t baseTile, uint8_t maxLevel) {
         if (end > loaded.size_bytes) {
             break;
         }
-        chain.levels[n] = { t, width, height };
+        chain.levels[n] = { t, width, height, gpuWidth, gpuHeight };
         chain.numLevels = (uint8_t)(n + 1);
-        prevWidth = width;
-        prevHeight = height;
     }
     if (chain.numLevels < 2) {
         chain.numLevels = 0;
@@ -1555,10 +1562,42 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
     mRapi->UploadTexture(mTexUploadBuffer, uploadWidth, uploadHeight);
 }
 
+// Box-filters a `srcW` x `srcH` RGBA8 image down to `dstW` x `dstH`, each no more than a texel
+// larger than the destination in an axis. Every destination texel averages the span of source texels
+// it covers, weighted by overlap, so the extra edge texel is spread across the row rather than dropped.
+static void ResampleRgba8(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* dst, uint32_t dstW,
+                          uint32_t dstH) {
+    for (uint32_t y = 0; y < dstH; y++) {
+        const float y0 = (float)y * srcH / dstH;
+        const float y1 = (float)(y + 1) * srcH / dstH;
+        for (uint32_t x = 0; x < dstW; x++) {
+            const float x0 = (float)x * srcW / dstW;
+            const float x1 = (float)(x + 1) * srcW / dstW;
+            float sum[4] = {};
+            float total = 0.0f;
+            for (uint32_t sy = (uint32_t)y0; sy < srcH && (float)sy < y1; sy++) {
+                const float wy = std::min((float)sy + 1, y1) - std::max((float)sy, y0);
+                for (uint32_t sx = (uint32_t)x0; sx < srcW && (float)sx < x1; sx++) {
+                    const float w = wy * (std::min((float)sx + 1, x1) - std::max((float)sx, x0));
+                    const uint8_t* p = src + ((size_t)sy * srcW + sx) * 4;
+                    for (int c = 0; c < 4; c++) {
+                        sum[c] += p[c] * w;
+                    }
+                    total += w;
+                }
+            }
+            uint8_t* d = dst + ((size_t)y * dstW + x) * 4;
+            for (int c = 0; c < 4; c++) {
+                d[c] = (uint8_t)(sum[c] / total + 0.5f);
+            }
+        }
+    }
+}
+
 void Interpreter::ImportMipChain(const MipChain& chain) {
     size_t totalBytes = 0;
     for (uint8_t n = 0; n < chain.numLevels; n++) {
-        totalBytes += (size_t)chain.levels[n].width * chain.levels[n].height * 4;
+        totalBytes += (size_t)chain.levels[n].gpuWidth * chain.levels[n].gpuHeight * 4;
     }
     if (mMipChainUploadBuffer.size() < totalBytes) {
         mMipChainUploadBuffer.resize(totalBytes);
@@ -1570,12 +1609,22 @@ void Interpreter::ImportMipChain(const MipChain& chain) {
     for (uint8_t n = 0; n < chain.numLevels; n++) {
         const MipChainLevel& level = chain.levels[n];
         const auto& tile = mRdp->texture_tile[level.tile];
+        const bool resample = level.width != level.gpuWidth || level.height != level.gpuHeight;
+        std::vector<uint8_t> decoded;
+        uint8_t* decodeTo = out;
+        if (resample) {
+            decoded.resize((size_t)level.width * level.height * 4);
+            decodeTo = decoded.data();
+        }
         if (!DecodeTexelRows(*mRdp, tile.fmt, tile.siz, tile.palette, TileTextureAddr(mRdp, level.tile), level.width,
-                             level.height, tile.line_size_bytes, out)) {
+                             level.height, tile.line_size_bytes, decodeTo)) {
             break;
         }
-        levels[numLevels++] = { out, level.width, level.height };
-        out += (size_t)level.width * level.height * 4;
+        if (resample) {
+            ResampleRgba8(decoded.data(), level.width, level.height, out, level.gpuWidth, level.gpuHeight);
+        }
+        levels[numLevels++] = { out, level.gpuWidth, level.gpuHeight };
+        out += (size_t)level.gpuWidth * level.gpuHeight * 4;
     }
     if (numLevels == 0) {
         SPDLOG_ERROR("ImportMipChain: can't decode fmt {} siz {} for tile {}",
