@@ -16,7 +16,8 @@ WiiUButtonToButtonMapping::WiiUButtonToButtonMapping(uint8_t portIndex, CONTROLL
 }
 
 void WiiUButtonToButtonMapping::UpdatePad(CONTROLLERBUTTONS_T& padButtons) {
-    if (mControlDeck->GamepadGameInputBlocked()) {
+    if (mControlDeck->GamepadGameInputBlocked() ||
+        !mControlDeck->GetConnectedPhysicalDeviceManager()->DeviceIsRoutedToPort(mPortIndex, mDeviceIndex)) {
         return;
     }
 

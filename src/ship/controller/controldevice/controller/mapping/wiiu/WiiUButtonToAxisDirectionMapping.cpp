@@ -18,7 +18,8 @@ WiiUButtonToAxisDirectionMapping::WiiUButtonToAxisDirectionMapping(uint8_t portI
 }
 
 float WiiUButtonToAxisDirectionMapping::GetNormalizedAxisDirectionValue() {
-    if (mControlDeck->GamepadGameInputBlocked()) {
+    if (mControlDeck->GamepadGameInputBlocked() ||
+        !mControlDeck->GetConnectedPhysicalDeviceManager()->DeviceIsRoutedToPort(mPortIndex, mDeviceIndex)) {
         return 0.0f;
     }
 

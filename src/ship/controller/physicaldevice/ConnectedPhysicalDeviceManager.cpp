@@ -1,8 +1,23 @@
 #include "ship/controller/physicaldevice/ConnectedPhysicalDeviceManager.h"
 #include <spdlog/spdlog.h>
+#include <algorithm>
+#ifdef __WIIU__
+#include "ship/controller/controldevice/controller/mapping/wiiu/WiiUMapping.h"
+#endif
 
 namespace Ship {
 ConnectedPhysicalDeviceManager::ConnectedPhysicalDeviceManager() {
+#ifdef __WIIU__
+    // The Wii U's devices have fixed ids, so the default routing (see WiiUDefaultPortForDevice) is
+    // seeded once rather than on connect.
+    for (const int32_t device : WiiUAllDevices()) {
+        for (uint8_t port = 0; port < WIIU_PORT_COUNT; port++) {
+            if (port != WiiUDefaultPortForDevice(device)) {
+                mIgnoredInstanceIds[port].insert(device);
+            }
+        }
+    }
+#endif
 }
 
 ConnectedPhysicalDeviceManager::~ConnectedPhysicalDeviceManager() {
@@ -24,6 +39,63 @@ ConnectedPhysicalDeviceManager::GetConnectedSDLGamepadsForPort(uint8_t portIndex
 
 std::unordered_map<int32_t, std::string> ConnectedPhysicalDeviceManager::GetConnectedSDLGamepadNames() {
     return mConnectedSDLGamepadNames;
+}
+
+#ifndef __WIIU__
+static GamepadFaceLayout FaceLayoutOf(SDL_Gamepad* gamepad) {
+    switch (SDL_GetGamepadType(gamepad)) {
+        case SDL_GAMEPAD_TYPE_PS3:
+        case SDL_GAMEPAD_TYPE_PS4:
+        case SDL_GAMEPAD_TYPE_PS5:
+            return GamepadFaceLayout::PlayStation;
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+        case SDL_GAMEPAD_TYPE_GAMECUBE:
+            return GamepadFaceLayout::Nintendo;
+        default:
+            return GamepadFaceLayout::Xbox;
+    }
+}
+#endif
+
+std::vector<ConnectedGamepad> ConnectedPhysicalDeviceManager::GetConnectedGamepads() {
+    std::vector<ConnectedGamepad> result;
+#ifdef __WIIU__
+    for (const int32_t device : WiiU::GetGamepadDeviceIndices()) {
+        result.push_back(
+            { device, WiiU::GetDeviceName(device), PHYSICAL_DEVICE_TYPE_GAMEPAD, GamepadFaceLayout::Nintendo });
+    }
+#else
+    for (const auto& [instanceId, gamepad] : mConnectedSDLGamepads) {
+        result.push_back({ instanceId, mConnectedSDLGamepadNames.at(instanceId), PHYSICAL_DEVICE_TYPE_GAMEPAD,
+                           FaceLayoutOf(gamepad) });
+    }
+    std::sort(result.begin(), result.end(),
+              [](const ConnectedGamepad& a, const ConnectedGamepad& b) { return a.id < b.id; });
+#endif
+    return result;
+}
+
+bool ConnectedPhysicalDeviceManager::HasKeyboard() {
+#ifdef __WIIU__
+    return false;
+#else
+    return SDL_HasKeyboard();
+#endif
+}
+
+bool ConnectedPhysicalDeviceManager::HasMouse() {
+#ifdef __WIIU__
+    return false;
+#else
+    return SDL_HasMouse();
+#endif
+}
+
+bool ConnectedPhysicalDeviceManager::DeviceIsRoutedToPort(uint8_t portIndex, int32_t id) {
+    return !PortIsIgnoringInstanceId(portIndex, id);
 }
 
 std::unordered_set<int32_t> ConnectedPhysicalDeviceManager::GetIgnoredInstanceIdsForPort(uint8_t portIndex) {

@@ -260,6 +260,10 @@ std::shared_ptr<ControllerAxisDirectionMapping> AxisDirectionMappingFactory::Cre
     }
 #else
     for (const auto& deviceIndex : WiiU::GetConnectedDeviceIndices()) {
+        if (!controlDeck->GetConnectedPhysicalDeviceManager()->DeviceIsRoutedToPort(portIndex, deviceIndex)) {
+            continue;
+        }
+
         const uint32_t held = WiiU::GetButtonsHeld(deviceIndex);
         if (held != 0) {
             // Take the lowest held bit so a single press yields a single mapping.

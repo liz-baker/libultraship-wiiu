@@ -76,6 +76,15 @@ bool DeviceIsConnected(int32_t deviceIndex);
 std::vector<int32_t> GetConnectedDeviceIndices();
 
 /**
+ * @brief Returns the connected devices that act as gamepads: the GamePad, Pro Controllers and
+ *        Wii Remotes with a Classic Controller.
+ *
+ * A bare Wii Remote and a Wii Remote with a Nunchuk are not gamepads and are left out. The
+ * GamePad, when present, is first, then KPAD channels in ascending order.
+ */
+std::vector<int32_t> GetGamepadDeviceIndices();
+
+/**
  * @brief Returns the normalized WiiUButton mask currently held on @p deviceIndex.
  * @return 0 if the device is disconnected.
  */

@@ -123,6 +123,15 @@ same number, leaving no channel shared between ports. The N64 C buttons default
 to the right stick, and `BTN_Z` maps to several source buttons at once (ZL, ZR,
 the nunchuk's Z, and the Wii Remote's "1") so one table covers every device.
 
+Per-port routing uses the same `ConnectedPhysicalDeviceManager` ignore lists as
+SDL, keyed by Wii U device id (`WIIU_DEVICE_GAMEPAD` or a KPAD channel). Every
+port gets mappings for every device, and the manager starts each device ignored
+on all ports except its default one, so `UnignoreInstanceIdForPort` /
+`IgnoreInstanceIdForPort` move a device between ports. `GetConnectedGamepads()`
+lists the GamePad, Pro Controllers and Wii Remotes with a Classic Controller
+(not bare Wii Remotes or Nunchuks), all with a Nintendo face layout;
+`HasKeyboard()` / `HasMouse()` are always false.
+
 **Audio.** `AudioBackend::AX` and `WiiUAudioPlayer` drive the console's AX mixer
 directly: two looping voices, one per output channel, read from a pair of ring
 buffers that `DoPlay()` writes ahead of the hardware read offset, and `Buffered()`

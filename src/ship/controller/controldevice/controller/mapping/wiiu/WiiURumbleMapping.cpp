@@ -22,6 +22,10 @@ void WiiURumbleMapping::StartRumble() {
         return;
     }
 
+    if (!mControlDeck->GetConnectedPhysicalDeviceManager()->DeviceIsRoutedToPort(mPortIndex, mDeviceIndex)) {
+        return;
+    }
+
     WiiU::SetRumble(mDeviceIndex, true);
 }
 

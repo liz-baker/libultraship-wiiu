@@ -117,6 +117,10 @@ std::shared_ptr<ControllerRumbleMapping> RumbleMappingFactory::CreateRumbleMappi
     }
 #else
     for (const auto& deviceIndex : WiiU::GetConnectedDeviceIndices()) {
+        if (!controlDeck->GetConnectedPhysicalDeviceManager()->DeviceIsRoutedToPort(portIndex, deviceIndex)) {
+            continue;
+        }
+
         if (!WiiU::DeviceSupportsRumble(deviceIndex) || WiiU::GetButtonsHeld(deviceIndex) == 0) {
             continue;
         }
