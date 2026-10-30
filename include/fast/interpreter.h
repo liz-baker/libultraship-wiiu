@@ -438,6 +438,51 @@ struct MipChain {
     MipChainLevel levels[MAX_MIP_CHAIN_LEVELS];
 };
 
+// What GfxSpTri1 works out from the RDP and RSP state alone, before it looks at a triangle's
+// vertices: the color combiner, the mip chain, and the size and clamp setup of each sampled
+// texture. Draws in a display list mostly repeat the same state, so the result is kept until one
+// of its inputs (TriDrawKey) changes.
+struct TriDrawState {
+    bool use_alpha, use_fog, use_blend_color, use_grayscale;
+    bool lodDetail, lodSharpen, useMipChain, same_size_fake_mip;
+    bool linear_filter;
+    ColorCombiner* comb;
+    MipChain mipChain;
+    uint32_t tm;
+    uint32_t tex_width[2], tex_height[2], tex_width2[2], tex_height2[2];
+    uint32_t effective_tile[2];
+    // Per slot: whether it samples the mip chain, and its wrap modes once the clamps that the
+    // shader handles itself (tm) are taken out.
+    bool chainSlot[2];
+    uint8_t cms[2], cmt[2];
+};
+
+// Every field TriDrawState is derived from. Padding is zeroed so two keys compare with memcmp.
+struct TriDrawKey {
+    struct Loaded {
+        const uint8_t* addr;
+        uint32_t orig_size_bytes, size_bytes, full_image_line_size_bytes, line_size_bytes, tex_flags;
+        float h_byte_scale, v_pixel_scale;
+        uint16_t tmem_base;
+        bool masked, blended;
+    };
+    struct Tile {
+        uint8_t fmt, siz, cms, cmt, masks, maskt, shifts, shiftt;
+        float uls, ult, lrs, lrt;
+        uint16_t tmem;
+        uint32_t line_size_bytes;
+        uint8_t tmem_index;
+    };
+    uint32_t other_mode_l, other_mode_h;
+    uint64_t combine_mode;
+    uint64_t shader_top;
+    uint32_t fb_textures_generation;
+    uint8_t first_tile_index, texture_max_level;
+    bool grayscale, shader_stack_empty;
+    Loaded loaded[2];
+    Tile tile[8];
+};
+
 class Interpreter {
   public:
     Interpreter();
@@ -516,6 +561,9 @@ class Interpreter {
     // Whether a tile's texels can be imported as a mip chain rather than through the single-level path.
     bool CanImportMipChain(int tile) const;
     void ImportTextureMask(int i, int tile);
+    // GfxSpTri1's state-only half; see TriDrawState.
+    void BuildTriDrawKey(TriDrawKey& key) const;
+    void DeriveTriDrawState(TriDrawState& s);
     void CalculateNormalDir(const F3DLight_t*, float coeffs[3]);
 
     /**
@@ -637,6 +685,13 @@ class Interpreter {
     std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> mGetPixelDepthCached; // get_pixel_depth_cached;
     std::map<std::string, MaskedTextureEntry, std::less<>> mMaskedTextures;
     std::unordered_map<uintptr_t, int> mFbTextures; // CPU addr -> GPU FB id
+    // Bumped whenever mFbTextures changes, because whether a tile can be a mip chain depends on it.
+    uint32_t mFbTexturesGeneration = 0;
+    TriDrawKey mTriDrawKey;
+    TriDrawState mTriDraw;
+    bool mTriDrawValid = false;
+    // Re-derive on every draw and abort if the cached state differs (FAST3D_VERIFY_TRI_CACHE=1).
+    bool mVerifyTriDraw = false;
 
     const std::unordered_map<Mtx*, MtxF>* mCurMtxReplacements;
     bool mMarkerOn; // This was originally a debug feature. Now it seems to control s2dex?

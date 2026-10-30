@@ -53,11 +53,11 @@ std::stack<std::string> currentDir;
 #define SUPPORT_CHECK(x) assert(x)
 
 // SCALE_M_N: upscale/downscale M-bit integer to N-bit
-#define SCALE_5_8(VAL_) (((VAL_)*0xFF) / 0x1F)
+#define SCALE_5_8(VAL_) (((VAL_) * 0xFF) / 0x1F)
 #define SCALE_8_5(VAL_) ((((VAL_) + 4) * 0x1F) / 0xFF)
-#define SCALE_4_8(VAL_) ((VAL_)*0x11)
+#define SCALE_4_8(VAL_) ((VAL_) * 0x11)
 #define SCALE_8_4(VAL_) ((VAL_) / 0x11)
-#define SCALE_3_8(VAL_) ((VAL_)*0x24)
+#define SCALE_3_8(VAL_) ((VAL_) * 0x24)
 #define SCALE_8_3(VAL_) ((VAL_) / 0x24)
 
 // Based off the current set native dimensions or active framebuffer
@@ -2007,7 +2007,7 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
 
         float world_pos[3] = { 0.0 };
         if (mRsp->geometry_mode & G_LIGHTING_POSITIONAL) {
-            float(*mtx)[4] = mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1];
+            float (*mtx)[4] = mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1];
             world_pos[0] = v->ob[0] * mtx[0][0] + v->ob[1] * mtx[1][0] + v->ob[2] * mtx[2][0] + mtx[3][0];
             world_pos[1] = v->ob[0] * mtx[0][1] + v->ob[1] * mtx[1][1] + v->ob[2] * mtx[2][1] + mtx[3][1];
             world_pos[2] = v->ob[0] * mtx[0][2] + v->ob[1] * mtx[1][2] + v->ob[2] * mtx[2][2] + mtx[3][2];
@@ -2185,93 +2185,95 @@ void Interpreter::GfxSpModifyVertex(uint16_t vtx_idx, uint8_t where, uint32_t va
     v->v = t;
 }
 
-void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bool is_rect) {
-    struct LoadedVertex* v1 = &mRsp->loaded_vertices[vtx1_idx];
-    struct LoadedVertex* v2 = &mRsp->loaded_vertices[vtx2_idx];
-    struct LoadedVertex* v3 = &mRsp->loaded_vertices[vtx3_idx];
-    struct LoadedVertex* v_arr[3] = { v1, v2, v3 };
-
-    // if (rand()%2) return;
-
-    if (v1->clip_rej & v2->clip_rej & v3->clip_rej) {
-        // The whole triangle lies outside the visible area
-        return;
+void Interpreter::BuildTriDrawKey(TriDrawKey& k) const {
+    memset(&k, 0, sizeof(k));
+    k.other_mode_l = mRdp->other_mode_l;
+    k.other_mode_h = mRdp->other_mode_h;
+    k.combine_mode = mRdp->combine_mode;
+    k.grayscale = mRdp->grayscale;
+    k.first_tile_index = mRdp->first_tile_index;
+    k.texture_max_level = mRdp->texture_max_level;
+    k.shader_stack_empty = mShaderStack.empty();
+    k.shader_top = k.shader_stack_empty ? 0 : mShaderStack.top();
+    k.fb_textures_generation = mFbTexturesGeneration;
+    for (int i = 0; i < 2; i++) {
+        const auto& in = mRdp->loaded_texture[i];
+        auto& out = k.loaded[i];
+        out.addr = in.addr;
+        out.orig_size_bytes = in.orig_size_bytes;
+        out.size_bytes = in.size_bytes;
+        out.full_image_line_size_bytes = in.full_image_line_size_bytes;
+        out.line_size_bytes = in.line_size_bytes;
+        out.tex_flags = in.tex_flags;
+        out.h_byte_scale = in.raw_tex_metadata.h_byte_scale;
+        out.v_pixel_scale = in.raw_tex_metadata.v_pixel_scale;
+        out.tmem_base = in.tmem_base;
+        out.masked = in.masked;
+        out.blended = in.blended;
     }
-
-    const uint32_t cull_both = get_attr(CULL_BOTH);
-    const uint32_t cull_front = get_attr(CULL_FRONT);
-    const uint32_t cull_back = get_attr(CULL_BACK);
-
-    if ((mRsp->geometry_mode & cull_both) != 0) {
-        float dx1 = v1->x / (v1->w) - v2->x / (v2->w);
-        float dy1 = v1->y / (v1->w) - v2->y / (v2->w);
-        float dx2 = v3->x / (v3->w) - v2->x / (v2->w);
-        float dy2 = v3->y / (v3->w) - v2->y / (v2->w);
-        float cross = dx1 * dy2 - dy1 * dx2;
-
-        if ((v1->w < 0) ^ (v2->w < 0) ^ (v3->w < 0)) {
-            // If one vertex lies behind the eye, negating cross will give the correct result.
-            // If all vertices lie behind the eye, the triangle will be rejected anyway.
-            cross = -cross;
-        }
-
-        // G_EX_INVERT_CULLING is a LUS extension, not tied to a specific ucode,
-        // so apply it regardless of the active microcode handler.
-        if ((mRsp->extra_geometry_mode & G_EX_INVERT_CULLING) != 0) {
-            cross = -cross;
-        }
-
-        auto cull_type = mRsp->geometry_mode & cull_both;
-
-        if (cull_type == cull_front) {
-            if (cross <= 0) {
-                return;
-            }
-        } else if (cull_type == cull_back) {
-            if (cross >= 0) {
-                return;
-            }
-        } else if (cull_type == cull_both) {
-            // Why is this even an option?
-            return;
-        }
+    for (int i = 0; i < 8; i++) {
+        const auto& in = mRdp->texture_tile[i];
+        auto& out = k.tile[i];
+        out.fmt = in.fmt;
+        out.siz = in.siz;
+        out.cms = in.cms;
+        out.cmt = in.cmt;
+        out.masks = in.masks;
+        out.maskt = in.maskt;
+        out.shifts = in.shifts;
+        out.shiftt = in.shiftt;
+        out.uls = in.uls;
+        out.ult = in.ult;
+        out.lrs = in.lrs;
+        out.lrt = in.lrt;
+        out.tmem = in.tmem;
+        out.line_size_bytes = in.line_size_bytes;
+        out.tmem_index = in.tmem_index;
     }
+}
 
-    // depth_test is set when the fragment has a depth value to compare (either from vertex Z via
-    // RSP G_ZBUFFER, or from the prim-depth register via G_ZS_PRIM) and Z_CMP is requested.
-    bool zbuffer_enabled = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
-    bool prim_depth_enabled = (mRdp->other_mode_l & G_ZS_PRIM) != 0;
-    bool depth_test = (zbuffer_enabled || prim_depth_enabled) && (mRdp->other_mode_l & Z_CMP) == Z_CMP;
-    bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
-    uint8_t depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
-    if (depth_test_and_mask != mRenderingState.depth_test_and_mask) {
-        Flush();
-        mRapi->SetDepthTestAndMask(depth_test, depth_mask);
-        mRenderingState.depth_test_and_mask = depth_test_and_mask;
+// The name of the first field that differs, or nullptr when the states match.
+static const char* TriDrawStateDiff(const TriDrawState& a, const TriDrawState& b) {
+#define DIFF(f)     \
+    if (a.f != b.f) \
+    return #f
+    DIFF(use_alpha);
+    DIFF(use_fog);
+    DIFF(use_blend_color);
+    DIFF(use_grayscale);
+    DIFF(lodDetail);
+    DIFF(lodSharpen);
+    DIFF(useMipChain);
+    DIFF(same_size_fake_mip);
+    DIFF(linear_filter);
+    DIFF(comb);
+    DIFF(tm);
+    DIFF(mipChain.numLevels);
+    // Field by field: the levels have padding that nothing initializes.
+    for (int i = 0; i < a.mipChain.numLevels; i++) {
+        DIFF(mipChain.levels[i].tile);
+        DIFF(mipChain.levels[i].width);
+        DIFF(mipChain.levels[i].height);
+        DIFF(mipChain.levels[i].gpuWidth);
+        DIFF(mipChain.levels[i].gpuHeight);
     }
-
-    bool zmode_decal = (mRdp->other_mode_l & ZMODE_DEC) == ZMODE_DEC;
-    if (zmode_decal != mRenderingState.decal_mode) {
-        Flush();
-        mRapi->SetZmodeDecal(zmode_decal);
-        mRenderingState.decal_mode = zmode_decal;
+    for (int i = 0; i < 2; i++) {
+        DIFF(tex_width[i]);
+        DIFF(tex_height[i]);
+        DIFF(tex_width2[i]);
+        DIFF(tex_height2[i]);
+        DIFF(effective_tile[i]);
+        DIFF(chainSlot[i]);
+        DIFF(cms[i]);
+        DIFF(cmt[i]);
     }
+#undef DIFF
+    return nullptr;
+}
 
-    if (mRdp->viewport_or_scissor_changed) {
-        if (memcmp(&mRdp->viewport, &mRenderingState.viewport, sizeof(mRdp->viewport)) != 0) {
-            Flush();
-            mRapi->SetViewport(mRdp->viewport.x, mRdp->viewport.y, mRdp->viewport.width, mRdp->viewport.height);
-            mRenderingState.viewport = mRdp->viewport;
-        }
-        if (memcmp(&mRdp->scissor, &mRenderingState.scissor, sizeof(mRdp->scissor)) != 0) {
-            Flush();
-            mRapi->SetScissor(mRdp->scissor.x, mRdp->scissor.y, mRdp->scissor.width, mRdp->scissor.height);
-            mRenderingState.scissor = mRdp->scissor;
-        }
-        mRdp->viewport_or_scissor_changed = false;
-    }
-
-    uint64_t cc_id = mRdp->combine_mode;
+// Reads only what BuildTriDrawKey captures, so a draw whose key is unchanged gets the same result.
+void Interpreter::DeriveTriDrawState(TriDrawState& s) {
+    memset(&s, 0, sizeof(s));
     uint64_t cc_options = 0;
     bool use_alpha = ((mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20) &&
                       (mRdp->other_mode_l & (3 << 16)) == (G_BL_1MA << 16)) ||
@@ -2371,15 +2373,24 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         cc_options |= SHADER_OPT(TEXEL1_BLEND);
     }
 
-    ColorCombinerKey key;
+    // shader_id is never set, so it has to start zeroed or the key varies with the stack's contents.
+    ColorCombinerKey key{};
     key.combine_mode = mRdp->combine_mode;
     key.options = cc_options;
 
     ColorCombiner* comb = LookupOrCreateColorCombiner(key);
 
+    s.comb = comb;
+    s.use_alpha = use_alpha;
+    s.use_fog = use_fog;
+    s.use_blend_color = use_blend_color;
+    s.use_grayscale = use_grayscale;
+    s.lodDetail = lodDetail;
+    s.lodSharpen = lodSharpen;
+    s.useMipChain = useMipChain;
+    s.mipChain = mipChain;
+
     uint32_t tm = 0;
-    uint32_t tex_width[2], tex_height[2], tex_width2[2], tex_height2[2];
-    uint32_t effective_tile[2];
 
     for (int i = 0; i < 2; i++) {
         uint32_t tile = mRdp->first_tile_index + i;
@@ -2392,23 +2403,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             // Without a chain to upload, both slots sample the base level.
             tile = mRdp->first_tile_index;
         }
-        effective_tile[i] = tile;
+        s.effective_tile[i] = tile;
 
         if (comb->usedTextures[i]) {
-            uint8_t mipLevels = chainSlot ? mipChain.numLevels : 0;
-            if (mRdp->textures_changed[i] || mRenderingState.mip_levels[i] != mipLevels) {
-                Flush();
-                mRenderingState.mip_levels[i] = mipLevels;
-                ImportTexture(i, tile, false, chainSlot ? &mipChain : nullptr);
-                if (mRdp->loaded_texture[i].masked) {
-                    ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);
-                }
-                if (mRdp->loaded_texture[i].blended) {
-                    ImportTexture(SHADER_FIRST_REPLACEMENT_TEXTURE + i, tile, true);
-                }
-                mRdp->textures_changed[i] = false;
-            }
-
             uint8_t cms = mRdp->texture_tile[tile].cms;
             uint8_t cmt = mRdp->texture_tile[tile].cmt;
 
@@ -2433,7 +2430,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                 line_size = 1;
             }
 
-            tex_height[i] = tex_size_bytes / line_size;
+            s.tex_height[i] = tex_size_bytes / line_size;
             switch (mRdp->texture_tile[tile].siz) {
                 case G_IM_SIZ_4b:
                     line_size <<= 1;
@@ -2447,84 +2444,230 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                     line_size /= 4; // RGBA32: 4 bytes per pixel (line_size is now actual DRAM stride)
                     break;
             }
-            tex_width[i] = line_size;
+            s.tex_width[i] = line_size;
 
-            tex_width2[i] = GetTileSizeFromCoordinates(mRdp->texture_tile[tile].uls, mRdp->texture_tile[tile].lrs);
-            tex_height2[i] = GetTileSizeFromCoordinates(mRdp->texture_tile[tile].ult, mRdp->texture_tile[tile].lrt);
+            s.tex_width2[i] = GetTileSizeFromCoordinates(mRdp->texture_tile[tile].uls, mRdp->texture_tile[tile].lrs);
+            s.tex_height2[i] = GetTileSizeFromCoordinates(mRdp->texture_tile[tile].ult, mRdp->texture_tile[tile].lrt);
 
             // Same pyramid-like ratio gate as ImportTexture: only clamp when loaded pixels
             // are close to rendered pixels (mipmap), not when much bigger (window scroll).
-            uint32_t loadedPx = tex_width[i] * tex_height[i];
-            uint32_t renderedPx = tex_width2[i] * tex_height2[i];
+            uint32_t loadedPx = s.tex_width[i] * s.tex_height[i];
+            uint32_t renderedPx = s.tex_width2[i] * s.tex_height2[i];
             bool pyrLike = renderedPx > 0 && loadedPx > renderedPx && loadedPx * 8 < renderedPx * 13;
             // Same wrap-period trim as the import paths. The >= tex_width2 guard skips a stale
             // mask left by an FB blit (the pause background), which would otherwise tile the FB.
             uint32_t maskW = mRdp->texture_tile[tile].masks;
             uint32_t maskH = mRdp->texture_tile[tile].maskt;
-            if (maskW != 0 && (1u << maskW) >= tex_width2[i] && (1u << maskW) < tex_width[i]) {
-                tex_width[i] = 1u << maskW;
+            if (maskW != 0 && (1u << maskW) >= s.tex_width2[i] && (1u << maskW) < s.tex_width[i]) {
+                s.tex_width[i] = 1u << maskW;
             }
-            if (maskH != 0 && (1u << maskH) >= tex_height2[i] && (1u << maskH) < tex_height[i]) {
-                tex_height[i] = 1u << maskH;
+            if (maskH != 0 && (1u << maskH) >= s.tex_height2[i] && (1u << maskH) < s.tex_height[i]) {
+                s.tex_height[i] = 1u << maskH;
             }
             // HD replacements must clamp to the tile region
             bool isHd = mRdp->loaded_texture[i].raw_tex_metadata.h_byte_scale != 1 ||
                         mRdp->loaded_texture[i].raw_tex_metadata.v_pixel_scale != 1;
-            if ((isHd || pyrLike || (cms & G_TX_CLAMP)) && tex_width2[i] > 0 && tex_width2[i] < tex_width[i]) {
-                tex_width[i] = tex_width2[i];
+            if ((isHd || pyrLike || (cms & G_TX_CLAMP)) && s.tex_width2[i] > 0 && s.tex_width2[i] < s.tex_width[i]) {
+                s.tex_width[i] = s.tex_width2[i];
             }
-            if ((isHd || pyrLike || (cmt & G_TX_CLAMP)) && tex_height2[i] > 0 && tex_height2[i] < tex_height[i]) {
-                tex_height[i] = tex_height2[i];
+            if ((isHd || pyrLike || (cmt & G_TX_CLAMP)) && s.tex_height2[i] > 0 && s.tex_height2[i] < s.tex_height[i]) {
+                s.tex_height[i] = s.tex_height2[i];
             }
 
             if (chainSlot) {
                 // The level-0 tile's own size, which is what the uploaded chain's base level is.
-                tex_width[i] = tex_width2[i] = mipChain.levels[0].width;
-                tex_height[i] = tex_height2[i] = mipChain.levels[0].height;
+                s.tex_width[i] = s.tex_width2[i] = mipChain.levels[0].width;
+                s.tex_height[i] = s.tex_height2[i] = mipChain.levels[0].height;
             }
 
-            uint32_t tex_width1 = tex_width[i] << (cms & G_TX_MIRROR);
-            uint32_t tex_height1 = tex_height[i] << (cmt & G_TX_MIRROR);
+            uint32_t tex_width1 = s.tex_width[i] << (cms & G_TX_MIRROR);
+            uint32_t tex_height1 = s.tex_height[i] << (cmt & G_TX_MIRROR);
 
-            if ((cms & G_TX_CLAMP) && ((cms & G_TX_MIRROR) || tex_width1 != tex_width2[i])) {
+            if ((cms & G_TX_CLAMP) && ((cms & G_TX_MIRROR) || tex_width1 != s.tex_width2[i])) {
                 tm |= 1 << 2 * i;
                 cms &= ~G_TX_CLAMP;
             }
-            if ((cmt & G_TX_CLAMP) && ((cmt & G_TX_MIRROR) || tex_height1 != tex_height2[i])) {
+            if ((cmt & G_TX_CLAMP) && ((cmt & G_TX_MIRROR) || tex_height1 != s.tex_height2[i])) {
                 tm |= 1 << 2 * i + 1;
                 cmt &= ~G_TX_CLAMP;
             }
 
-            if (mRenderingState.mTextures[i] == nullptr) {
-                continue;
-            }
-
-            bool linear_filter = (mRdp->other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
-            if (linear_filter != mRenderingState.mTextures[i]->second.linear_filter ||
-                cms != mRenderingState.mTextures[i]->second.cms || cmt != mRenderingState.mTextures[i]->second.cmt) {
-                Flush();
-
-                // Set the same sampler params on the blended texture. Needed for opengl.
-                if (mRdp->loaded_texture[i].blended) {
-                    mRapi->SetSamplerParameters(SHADER_FIRST_REPLACEMENT_TEXTURE + i, linear_filter, cms, cmt);
-                }
-
-                mRapi->SetSamplerParameters(i, linear_filter, cms, cmt);
-                mRenderingState.mTextures[i]->second.linear_filter = linear_filter;
-                mRenderingState.mTextures[i]->second.cms = cms;
-                mRenderingState.mTextures[i]->second.cmt = cmt;
-            }
+            s.chainSlot[i] = chainSlot;
+            s.cms[i] = cms;
+            s.cmt[i] = cmt;
         }
     }
+    s.tm = tm;
+    s.linear_filter = (mRdp->other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
 
     // Some display lists set tile1 == tile0 (same tmem source, same G_SETTILESIZE) to get a
     // TRILERP combiner without a real mip pyramid. There is no second mip level to blend from
     // there, so force LOD_FRACTION to 0 (pure texel0) instead of running the vertex-w-distance
     // hack below, which would otherwise blend in texel1's (different, unrelated) texels.
-    bool same_size_fake_mip =
-        comb->usedTextures[0] && comb->usedTextures[1] && effective_tile[0] != effective_tile[1] &&
-        mRdp->texture_tile[effective_tile[0]].tmem_index == mRdp->texture_tile[effective_tile[1]].tmem_index &&
-        tex_width2[0] > 0 && tex_width2[0] == tex_width2[1] && tex_height2[0] > 0 && tex_height2[0] == tex_height2[1];
+    s.same_size_fake_mip =
+        comb->usedTextures[0] && comb->usedTextures[1] && s.effective_tile[0] != s.effective_tile[1] &&
+        mRdp->texture_tile[s.effective_tile[0]].tmem_index == mRdp->texture_tile[s.effective_tile[1]].tmem_index &&
+        s.tex_width2[0] > 0 && s.tex_width2[0] == s.tex_width2[1] && s.tex_height2[0] > 0 &&
+        s.tex_height2[0] == s.tex_height2[1];
+}
+
+void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bool is_rect) {
+    struct LoadedVertex* v1 = &mRsp->loaded_vertices[vtx1_idx];
+    struct LoadedVertex* v2 = &mRsp->loaded_vertices[vtx2_idx];
+    struct LoadedVertex* v3 = &mRsp->loaded_vertices[vtx3_idx];
+    struct LoadedVertex* v_arr[3] = { v1, v2, v3 };
+
+    // if (rand()%2) return;
+
+    if (v1->clip_rej & v2->clip_rej & v3->clip_rej) {
+        // The whole triangle lies outside the visible area
+        return;
+    }
+
+    const uint32_t cull_both = get_attr(CULL_BOTH);
+    const uint32_t cull_front = get_attr(CULL_FRONT);
+    const uint32_t cull_back = get_attr(CULL_BACK);
+
+    if ((mRsp->geometry_mode & cull_both) != 0) {
+        float dx1 = v1->x / (v1->w) - v2->x / (v2->w);
+        float dy1 = v1->y / (v1->w) - v2->y / (v2->w);
+        float dx2 = v3->x / (v3->w) - v2->x / (v2->w);
+        float dy2 = v3->y / (v3->w) - v2->y / (v2->w);
+        float cross = dx1 * dy2 - dy1 * dx2;
+
+        if ((v1->w < 0) ^ (v2->w < 0) ^ (v3->w < 0)) {
+            // If one vertex lies behind the eye, negating cross will give the correct result.
+            // If all vertices lie behind the eye, the triangle will be rejected anyway.
+            cross = -cross;
+        }
+
+        // G_EX_INVERT_CULLING is a LUS extension, not tied to a specific ucode,
+        // so apply it regardless of the active microcode handler.
+        if ((mRsp->extra_geometry_mode & G_EX_INVERT_CULLING) != 0) {
+            cross = -cross;
+        }
+
+        auto cull_type = mRsp->geometry_mode & cull_both;
+
+        if (cull_type == cull_front) {
+            if (cross <= 0) {
+                return;
+            }
+        } else if (cull_type == cull_back) {
+            if (cross >= 0) {
+                return;
+            }
+        } else if (cull_type == cull_both) {
+            // Why is this even an option?
+            return;
+        }
+    }
+
+    // depth_test is set when the fragment has a depth value to compare (either from vertex Z via
+    // RSP G_ZBUFFER, or from the prim-depth register via G_ZS_PRIM) and Z_CMP is requested.
+    bool zbuffer_enabled = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
+    bool prim_depth_enabled = (mRdp->other_mode_l & G_ZS_PRIM) != 0;
+    bool depth_test = (zbuffer_enabled || prim_depth_enabled) && (mRdp->other_mode_l & Z_CMP) == Z_CMP;
+    bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
+    uint8_t depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
+    if (depth_test_and_mask != mRenderingState.depth_test_and_mask) {
+        Flush();
+        mRapi->SetDepthTestAndMask(depth_test, depth_mask);
+        mRenderingState.depth_test_and_mask = depth_test_and_mask;
+    }
+
+    bool zmode_decal = (mRdp->other_mode_l & ZMODE_DEC) == ZMODE_DEC;
+    if (zmode_decal != mRenderingState.decal_mode) {
+        Flush();
+        mRapi->SetZmodeDecal(zmode_decal);
+        mRenderingState.decal_mode = zmode_decal;
+    }
+
+    if (mRdp->viewport_or_scissor_changed) {
+        if (memcmp(&mRdp->viewport, &mRenderingState.viewport, sizeof(mRdp->viewport)) != 0) {
+            Flush();
+            mRapi->SetViewport(mRdp->viewport.x, mRdp->viewport.y, mRdp->viewport.width, mRdp->viewport.height);
+            mRenderingState.viewport = mRdp->viewport;
+        }
+        if (memcmp(&mRdp->scissor, &mRenderingState.scissor, sizeof(mRdp->scissor)) != 0) {
+            Flush();
+            mRapi->SetScissor(mRdp->scissor.x, mRdp->scissor.y, mRdp->scissor.width, mRdp->scissor.height);
+            mRenderingState.scissor = mRdp->scissor;
+        }
+        mRdp->viewport_or_scissor_changed = false;
+    }
+
+    TriDrawKey drawKey;
+    BuildTriDrawKey(drawKey);
+    if (!mTriDrawValid || memcmp(&drawKey, &mTriDrawKey, sizeof(drawKey)) != 0) {
+        DeriveTriDrawState(mTriDraw);
+        mTriDrawKey = drawKey;
+        mTriDrawValid = true;
+    } else if (mVerifyTriDraw) {
+        TriDrawState fresh;
+        DeriveTriDrawState(fresh);
+        if (const char* field = TriDrawStateDiff(fresh, mTriDraw)) {
+            SPDLOG_CRITICAL("GfxSpTri1: cached draw state differs from a fresh derivation in {}", field);
+            abort();
+        }
+    }
+    const TriDrawState& s = mTriDraw;
+    ColorCombiner* comb = s.comb;
+    const bool use_alpha = s.use_alpha;
+    const bool use_fog = s.use_fog;
+    const bool use_blend_color = s.use_blend_color;
+    const bool use_grayscale = s.use_grayscale;
+    const bool lodDetail = s.lodDetail;
+    const bool lodSharpen = s.lodSharpen;
+    const bool useMipChain = s.useMipChain;
+    const bool same_size_fake_mip = s.same_size_fake_mip;
+    const uint32_t tm = s.tm;
+    const uint32_t* tex_width = s.tex_width;
+    const uint32_t* tex_height = s.tex_height;
+    const uint32_t* tex_width2 = s.tex_width2;
+    const uint32_t* tex_height2 = s.tex_height2;
+    const uint32_t* effective_tile = s.effective_tile;
+
+    for (int i = 0; i < 2; i++) {
+        if (!comb->usedTextures[i]) {
+            continue;
+        }
+        const uint32_t tile = s.effective_tile[i];
+        uint8_t mipLevels = s.chainSlot[i] ? s.mipChain.numLevels : 0;
+        if (mRdp->textures_changed[i] || mRenderingState.mip_levels[i] != mipLevels) {
+            Flush();
+            mRenderingState.mip_levels[i] = mipLevels;
+            ImportTexture(i, tile, false, s.chainSlot[i] ? &s.mipChain : nullptr);
+            if (mRdp->loaded_texture[i].masked) {
+                ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);
+            }
+            if (mRdp->loaded_texture[i].blended) {
+                ImportTexture(SHADER_FIRST_REPLACEMENT_TEXTURE + i, tile, true);
+            }
+            mRdp->textures_changed[i] = false;
+        }
+
+        if (mRenderingState.mTextures[i] == nullptr) {
+            continue;
+        }
+
+        const uint8_t cms = s.cms[i];
+        const uint8_t cmt = s.cmt[i];
+        if (s.linear_filter != mRenderingState.mTextures[i]->second.linear_filter ||
+            cms != mRenderingState.mTextures[i]->second.cms || cmt != mRenderingState.mTextures[i]->second.cmt) {
+            Flush();
+
+            // Set the same sampler params on the blended texture. Needed for opengl.
+            if (mRdp->loaded_texture[i].blended) {
+                mRapi->SetSamplerParameters(SHADER_FIRST_REPLACEMENT_TEXTURE + i, s.linear_filter, cms, cmt);
+            }
+
+            mRapi->SetSamplerParameters(i, s.linear_filter, cms, cmt);
+            mRenderingState.mTextures[i]->second.linear_filter = s.linear_filter;
+            mRenderingState.mTextures[i]->second.cms = cms;
+            mRenderingState.mTextures[i]->second.cmt = cmt;
+        }
+    }
 
     struct ShaderProgram* prg = comb->prg[tm];
     if (prg == NULL) {
@@ -3662,7 +3805,7 @@ void Interpreter::Gfxs2dexBgCopy(F3DuObjBg* bg) {
         rawTexMetadata.v_pixel_scale = tex->VPixelScale;
         rawTexMetadata.type = tex->Type;
         rawTexMetadata.resource = tex;
-        data = (uintptr_t) reinterpret_cast<char*>(tex->ImageData);
+        data = (uintptr_t)reinterpret_cast<char*>(tex->ImageData);
     }
 
     s16 dsdx = 4 << 10;
@@ -3699,7 +3842,7 @@ void Interpreter::Gfxs2dexBg1cyc(F3DuObjBg* bg) {
         rawTexMetadata.v_pixel_scale = tex->VPixelScale;
         rawTexMetadata.type = tex->Type;
         rawTexMetadata.resource = tex;
-        data = (uintptr_t) reinterpret_cast<char*>(tex->ImageData);
+        data = (uintptr_t)reinterpret_cast<char*>(tex->ImageData);
     }
 
     // TODO: Implement bg scaling correctly
@@ -4660,7 +4803,7 @@ bool gfx_set_timg_handler_rdp(F3DGfx** cmd0) {
                 return false;
             }
 
-            i = (uintptr_t) reinterpret_cast<char*>(tex->ImageData);
+            i = (uintptr_t)reinterpret_cast<char*>(tex->ImageData);
             texFlags = tex->Flags;
             rawTexMetdata.width = tex->Width;
             rawTexMetdata.height = tex->Height;
@@ -5687,10 +5830,12 @@ void Interpreter::SpReset() {
 
 void Interpreter::RegisterFbTexture(const void* cpuAddr, int fbId) {
     mFbTextures[(uintptr_t)cpuAddr] = fbId;
+    mFbTexturesGeneration++;
 }
 
 void Interpreter::UnregisterFbTexture(const void* cpuAddr) {
     mFbTextures.erase((uintptr_t)cpuAddr);
+    mFbTexturesGeneration++;
 }
 
 void Interpreter::GetDimensions(uint32_t* width, uint32_t* height, int32_t* posX, int32_t* posY) {
@@ -5704,6 +5849,7 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
     mWapi = wapi;
     mRapi = rapi;
     mResourceManager = std::move(resourceManager);
+    mVerifyTriDraw = std::getenv("FAST3D_VERIFY_TRI_CACHE") != nullptr;
     sResourceManager = mResourceManager;
     mConsoleVariable = std::move(consoleVariable);
     mWapi->Init(game_name, rapi->GetName(), start_in_fullscreen, width, height, posX, posY);
@@ -6255,6 +6401,7 @@ extern "C" void gfx_texture_cache_clear() {
 extern "C" void gfx_shader_cache_clear() {
     auto instance = Fast::mInstance.lock().get();
     instance->mColorCombinerPool.clear();
+    instance->mTriDrawValid = false;
     instance->mPrevCombiner = Fast::mInstance.lock().get()->mColorCombinerPool.end();
     instance->mRenderingState.mShaderProgram = nullptr;
     instance->mRapi->ClearShaderCache();
