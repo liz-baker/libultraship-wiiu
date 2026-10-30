@@ -2371,7 +2371,8 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         cc_options |= SHADER_OPT(TEXEL1_BLEND);
     }
 
-    ColorCombinerKey key;
+    // shader_id is never set, so it has to start zeroed or the key varies with the stack's contents.
+    ColorCombinerKey key{};
     key.combine_mode = mRdp->combine_mode;
     key.options = cc_options;
 
