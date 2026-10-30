@@ -182,6 +182,19 @@ std::vector<int32_t> GetConnectedDeviceIndices() {
     return devices;
 }
 
+std::vector<int32_t> GetGamepadDeviceIndices() {
+    std::vector<int32_t> devices;
+
+    for (const int32_t device : GetConnectedDeviceIndices()) {
+        const DeviceKind kind = GetDeviceKind(device);
+        if (kind == DeviceKind::GamePad || kind == DeviceKind::Classic || kind == DeviceKind::Pro) {
+            devices.push_back(device);
+        }
+    }
+
+    return devices;
+}
+
 uint32_t GetButtonsHeld(int32_t deviceIndex) {
     switch (GetDeviceKind(deviceIndex)) {
         case DeviceKind::GamePad:

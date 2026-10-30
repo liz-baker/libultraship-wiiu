@@ -21,7 +21,8 @@ WiiUAxisDirectionToButtonMapping::WiiUAxisDirectionToButtonMapping(uint8_t portI
 }
 
 void WiiUAxisDirectionToButtonMapping::UpdatePad(CONTROLLERBUTTONS_T& padButtons) {
-    if (mControlDeck->GamepadGameInputBlocked()) {
+    if (mControlDeck->GamepadGameInputBlocked() ||
+        !mControlDeck->GetConnectedPhysicalDeviceManager()->DeviceIsRoutedToPort(mPortIndex, mDeviceIndex)) {
         return;
     }
 

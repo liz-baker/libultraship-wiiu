@@ -4,6 +4,7 @@
 #include <unordered_set>
 #include <vector>
 #include <string>
+#include "ship/controller/physicaldevice/PhysicalDeviceType.h"
 #ifndef __WIIU__
 #include <SDL3/SDL.h>
 #else
@@ -12,11 +13,31 @@ typedef struct SDL_Gamepad SDL_Gamepad;
 
 namespace Ship {
 
+/** @brief How a gamepad's face buttons are labelled, for showing printed labels in an editor. */
+enum class GamepadFaceLayout {
+    Xbox,        ///< South/East/West/North are A/B/X/Y.
+    Nintendo,    ///< South/East/West/North are B/A/Y/X.
+    PlayStation, ///< South/East/West/North are Cross/Circle/Square/Triangle.
+};
+
+/** @brief One attached gamepad, as listed by ConnectedPhysicalDeviceManager::GetConnectedGamepads(). */
+struct ConnectedGamepad {
+    /**
+     * Identifier accepted by the per-port ignore functions. On SDL platforms it is the SDL joystick
+     * instance ID; on the Wii U it is a WiiU device index (WIIU_DEVICE_GAMEPAD or a KPAD channel).
+     */
+    int32_t id;
+    std::string name;              ///< Human-readable device name.
+    PhysicalDeviceType deviceType; ///< PHYSICAL_DEVICE_TYPE_GAMEPAD for the current platform.
+    GamepadFaceLayout faceLayout;  ///< Always Nintendo on the Wii U.
+};
+
 /**
- * @brief Tracks connected SDL gamepads and manages per-port ignore lists.
+ * @brief Tracks connected gamepads and manages per-port ignore lists.
  *
- * Maintains a live map of connected SDL gamepads. Per-port ignore lists allow a
- * controller to be excluded from a specific port.
+ * Maintains a live map of connected SDL gamepads (on the Wii U, the native VPAD/KPAD devices are
+ * queried live instead). Per-port ignore lists allow a controller to be excluded from a specific
+ * port; they apply to the Wii U's devices the same way as to SDL's.
  */
 class ConnectedPhysicalDeviceManager {
   public:
@@ -39,6 +60,38 @@ class ConnectedPhysicalDeviceManager {
      * @return Map of SDL joystick instance ID to human-readable gamepad name.
      */
     std::unordered_map<int32_t, std::string> GetConnectedSDLGamepadNames();
+
+    /**
+     * @brief Lists the attached gamepads on every platform.
+     *
+     * Ordered by ConnectedGamepad::id ascending on SDL platforms. On the Wii U the order is the
+     * GamePad, then KPAD channels 0 to 3; only the GamePad, Pro Controllers and Wii Remotes with a
+     * Classic Controller are listed (a bare Wii Remote or one with a Nunchuk is not supported).
+     * Reflects hot-plug as soon as SDL reports it (call RefreshConnectedSDLGamepads() from the
+     * add/remove handler, as the SDL event handler already does); the Wii U is queried live.
+     *
+     * @return The attached gamepads.
+     */
+    std::vector<ConnectedGamepad> GetConnectedGamepads();
+
+    /**
+     * @brief Returns whether a keyboard is attached (SDL_HasKeyboard), evaluated at call time so it
+     *        follows hot-plug. Always false on the Wii U.
+     */
+    bool HasKeyboard();
+
+    /**
+     * @brief Returns whether a mouse is attached (SDL_HasMouse), evaluated at call time so it
+     *        follows hot-plug. Always false on the Wii U.
+     */
+    bool HasMouse();
+
+    /**
+     * @brief Returns whether a device may drive a port, i.e. it is not on that port's ignore list.
+     * @param portIndex Zero-based controller port index.
+     * @param id        ConnectedGamepad::id of the device.
+     */
+    bool DeviceIsRoutedToPort(uint8_t portIndex, int32_t id);
 
     /**
      * @brief Returns the set of SDL joystick instance IDs ignored for a port.
