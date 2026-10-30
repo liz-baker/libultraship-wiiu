@@ -8,13 +8,15 @@
 #include <cstring>
 #include <string>
 #include <thread>
+#include <utility>
 
 #include <spdlog/spdlog.h>
+
+#include "fast/interpreter.h"
 
 #ifdef __WIIU__
 #include <coreinit/systeminfo.h>
 #include <coreinit/time.h>
-#include <whb/log.h>
 #endif
 
 namespace Fast::Prof {
@@ -83,6 +85,10 @@ struct State {
     int cycleWindow = 0;
     int cycleStep = 0;
     Experiments base;
+
+    int curOpcode = -1;
+    uint64_t opTicks[256] = {};
+    uint64_t opCount[256] = {};
 };
 State s;
 
@@ -112,15 +118,22 @@ const CycleStep& StepFor(int step) {
 }
 constexpr int kCycleSteps = 2 * kCycleExperiments;
 
+void Account(uint64_t t) {
+    const uint64_t dt = t - s.lastT;
+    s.stageTicks[s.stack[s.depth]] += dt;
+    if (s.curOpcode >= 0 && s.stack[s.depth] == STAGE_RUN) {
+        s.opTicks[s.curOpcode] += dt;
+    }
+}
+
 bool Mine() {
     return s.started && std::this_thread::get_id() == s.owner;
 }
 
+// The logger reaches the UDP log on the Wii U too (stdout is redirected there), so this is the only
+// output; writing each line twice overran the UDP socket.
 void Emit(const std::string& line) {
     spdlog::info("{}", line);
-#ifdef __WIIU__
-    WHBLogPrint(line.c_str());
-#endif
 }
 
 void Start() {
@@ -210,6 +223,34 @@ void Report(uint64_t now) {
         Emit(line);
     }
 
+    // The commands the RUN stage spends most of its own time on.
+    int top[8];
+    int nTop = 0;
+    for (int op = 0; op < 256; op++) {
+        if (s.opTicks[op] == 0) {
+            continue;
+        }
+        int at = nTop < 8 ? nTop++ : 8;
+        top[at < 8 ? at : 7] = at < 8 ? op : (s.opTicks[op] > s.opTicks[top[7]] ? op : top[7]);
+        for (int j = (at < 8 ? at : 7); j > 0 && s.opTicks[top[j]] > s.opTicks[top[j - 1]]; j--) {
+            std::swap(top[j], top[j - 1]);
+        }
+    }
+    if (nTop) {
+        line = "[prof] RUN by command (ms/frame, calls/frame):";
+        for (int i = 0; i < nTop; i++) {
+            snprintf(buf, sizeof(buf), " %s=%.2f,%.0f", GfxGetOpcodeName(static_cast<int8_t>(top[i])),
+                     s.opTicks[top[i]] / frames / perMs, s.opCount[top[i]] / frames);
+            line += buf;
+            if (i == 3) {
+                Emit(line);
+                line = "[prof] RUN by command:";
+            }
+        }
+        Emit(line);
+    }
+    memset(s.opTicks, 0, sizeof(s.opTicks));
+    memset(s.opCount, 0, sizeof(s.opCount));
     memset(s.stageTicks, 0, sizeof(s.stageTicks));
     memset(s.counters, 0, sizeof(s.counters));
     memset(s.buckets, 0, sizeof(s.buckets));
@@ -272,7 +313,7 @@ void Enter(Stage stage) {
         return;
     }
     const uint64_t t = Now();
-    s.stageTicks[s.stack[s.depth]] += t - s.lastT;
+    Account(t);
     s.lastT = t;
     if (s.depth + 1 < State::kMaxDepth) {
         s.stack[++s.depth] = stage;
@@ -284,7 +325,7 @@ void Exit() {
         return;
     }
     const uint64_t t = Now();
-    s.stageTicks[s.stack[s.depth]] += t - s.lastT;
+    Account(t);
     s.lastT = t;
     s.depth--;
 }
@@ -294,7 +335,7 @@ void Switch(Stage stage) {
         return;
     }
     const uint64_t t = Now();
-    s.stageTicks[s.stack[s.depth]] += t - s.lastT;
+    Account(t);
     s.lastT = t;
     s.stack[s.depth] = stage;
 }
@@ -303,6 +344,19 @@ void Count(Counter counter, uint64_t n) {
     if (Mine()) {
         s.counters[counter] += n;
     }
+}
+
+void OpcodeBegin(int8_t opcode) {
+    if (!Mine()) {
+        return;
+    }
+    s.curOpcode = static_cast<uint8_t>(opcode);
+    s.opCount[s.curOpcode]++;
+    s.counters[COUNTER_COMMANDS]++;
+}
+
+void OpcodeEnd() {
+    s.curOpcode = -1;
 }
 
 void SetUserStageName(Stage userStage, const char* name) {
@@ -329,7 +383,7 @@ void FrameEnd() {
         return;
     }
     const uint64_t t = Now();
-    s.stageTicks[s.stack[s.depth]] += t - s.lastT;
+    Account(t);
     s.lastT = t;
 
     const uint64_t frame = t - s.lastFrameEnd;

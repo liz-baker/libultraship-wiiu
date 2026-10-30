@@ -55,6 +55,7 @@ namespace Fast::Prof {
     X(SYNC_READBACK)    /* ... a framebuffer or depth readback */        \
     X(COMBINERS_MADE)   /* color combiners generated */                  \
     X(SHADERS_MADE)     /* shader programs generated */                  \
+    X(COMMANDS)         /* display-list commands run */                  \
     X(DROPPED_FRAMES)   /* frames IsFrameReady refused */
 
 enum Stage : uint8_t {
@@ -102,6 +103,9 @@ void Exit();
 void Switch(Stage stage);
 void Count(Counter counter, uint64_t n = 1);
 void SetUserStageName(Stage userStage, const char* name);
+// Attributes the time the RUN stage spends on its own to the display-list command being run.
+void OpcodeBegin(int8_t opcode);
+void OpcodeEnd();
 // Marks the start of a frame's rendering work; logs the totals once a second.
 void FrameBegin();
 void FrameEnd();
@@ -117,10 +121,22 @@ struct Scope {
     Scope& operator=(const Scope&) = delete;
 };
 
+struct OpScope {
+    explicit OpScope(int8_t opcode) {
+        OpcodeBegin(opcode);
+    }
+    ~OpScope() {
+        OpcodeEnd();
+    }
+    OpScope(const OpScope&) = delete;
+    OpScope& operator=(const OpScope&) = delete;
+};
+
 #define FAST3D_PROF_CAT2(a, b) a##b
 #define FAST3D_PROF_CAT(a, b) FAST3D_PROF_CAT2(a, b)
 #define PROF_SCOPE(stage) ::Fast::Prof::Scope FAST3D_PROF_CAT(profScope, __LINE__)(::Fast::Prof::STAGE_##stage)
 #define PROF_SWITCH(stage) ::Fast::Prof::Switch(::Fast::Prof::STAGE_##stage)
+#define PROF_OP(opcode) ::Fast::Prof::OpScope FAST3D_PROF_CAT(profOp, __LINE__)(opcode)
 #define PROF_COUNT(counter) ::Fast::Prof::Count(::Fast::Prof::COUNTER_##counter)
 #define PROF_COUNT_N(counter, n) ::Fast::Prof::Count(::Fast::Prof::COUNTER_##counter, (n))
 #define PROF_EXP(field) (::Fast::Prof::gExp.field)
@@ -129,6 +145,7 @@ struct Scope {
 
 #define PROF_SCOPE(stage) ((void)0)
 #define PROF_SWITCH(stage) ((void)0)
+#define PROF_OP(opcode) ((void)0)
 #define PROF_COUNT(counter) ((void)0)
 #define PROF_COUNT_N(counter, n) ((void)0)
 

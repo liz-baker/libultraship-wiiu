@@ -5670,6 +5670,7 @@ static void gfx_step() {
     auto& cmd = g_exec_stack.currCmd();
     auto cmd0 = cmd;
     int8_t opcode = (int8_t)(cmd->words.w0 >> 24);
+    PROF_OP(opcode);
 
 #ifdef USE_GBI_TRACE
     if (cmd->words.trace.valid && mConsoleVariable->GetInteger("gEnableGFXTrace", 0)) {
