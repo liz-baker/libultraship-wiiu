@@ -101,10 +101,10 @@ void Start() {
 void PrintExperiments() {
     std::string line = "[prof] experiments:";
     char buf[64];
-#define SHOW(label, field, fmt)                      \
-    if (gExp.field) {                                \
+#define SHOW(label, field, fmt)                                    \
+    if (gExp.field) {                                              \
         snprintf(buf, sizeof(buf), " " label "=" fmt, gExp.field); \
-        line += buf;                                 \
+        line += buf;                                               \
     }
     SHOW("skip_tris", skip_tris, "%d")
     SHOW("tri_limit", tri_limit, "%d")
