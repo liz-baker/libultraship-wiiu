@@ -174,7 +174,7 @@ float4 filter3pointMip(texture2d<float> tex, sampler texSmplr, float2 texCoord, 
     return c;
 }
 
-float4 hookTexture2D(texture2d<float> tex, sampler texSmplr, thread const float2& uv, thread const float2& texSize, thread const int filtering, float lodBias) {
+float4 hookTexture2D(texture2d<float> tex, sampler texSmplr, thread const float2& uv, thread const float2& texSize, int filtering, float lodBias) {
 @if(o_three_point_filtering)
     if(filtering == @{FILTER_THREE_POINT}) {
         if (tex.get_num_mip_levels() > 1) {
