@@ -139,7 +139,7 @@ float4 mod(float4 a, float4 b) {
 #define WRAP(x, low, high) mod((x)-(low), (high)-(low)) + (low)
 #define TEX_OFFSET(tex, texSmplr, texCoord, off, texSize) tex.sample(texSmplr, texCoord - off / texSize)
 
-float4 filter3point(thread const texture2d<float> tex, thread const sampler texSmplr, thread const float2& texCoord, thread const float2& texSize) {
+float4 filter3point(texture2d<float> tex, sampler texSmplr, thread const float2& texCoord, thread const float2& texSize) {
     float2 offset = fract((texCoord * texSize) - float2(0.5));
     offset -= float2(step(1.0, offset.x + offset.y));
     float4 c0 = TEX_OFFSET(tex, texSmplr, texCoord, offset, texSize);
@@ -149,7 +149,7 @@ float4 filter3point(thread const texture2d<float> tex, thread const sampler texS
 }
 
 // filter3point() at one level of a mip chain.
-float4 filter3pointLevel(thread const texture2d<float> tex, thread const sampler texSmplr, float2 texCoord, float2 texSize, float lvl) {
+float4 filter3pointLevel(texture2d<float> tex, sampler texSmplr, float2 texCoord, float2 texSize, float lvl) {
     float2 levelSize = max(floor(texSize / exp2(lvl)), float2(1.0));
     float2 offset = fract((texCoord * levelSize) - float2(0.5));
     offset -= float2(step(1.0, offset.x + offset.y));
@@ -161,7 +161,7 @@ float4 filter3pointLevel(thread const texture2d<float> tex, thread const sampler
 
 // The RDP's TRILERP over 3-point filtered levels: pick the level from the texel footprint the way
 // the GPU would, then blend the two levels either side of it.
-float4 filter3pointMip(thread const texture2d<float> tex, thread const sampler texSmplr, float2 texCoord, float2 texSize, float lodBias) {
+float4 filter3pointMip(texture2d<float> tex, sampler texSmplr, float2 texCoord, float2 texSize, float lodBias) {
     float2 dx = dfdx(texCoord * texSize);
     float2 dy = dfdy(texCoord * texSize);
     float lod = 0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1e-8)) + lodBias;
@@ -174,7 +174,7 @@ float4 filter3pointMip(thread const texture2d<float> tex, thread const sampler t
     return c;
 }
 
-float4 hookTexture2D(thread const texture2d<float> tex, thread const sampler texSmplr, thread const float2& uv, thread const float2& texSize, thread const int filtering, float lodBias) {
+float4 hookTexture2D(texture2d<float> tex, sampler texSmplr, thread const float2& uv, thread const float2& texSize, thread const int filtering, float lodBias) {
 @if(o_three_point_filtering)
     if(filtering == @{FILTER_THREE_POINT}) {
         if (tex.get_num_mip_levels() > 1) {
