@@ -29,7 +29,15 @@ namespace Fast::Prof {
     X(USER0)       /* named by SetUserStageName */                                                     \
     X(USER1)                                                                                           \
     X(USER2)                                                                                           \
-    X(USER3)
+    X(USER3)                                                                                           \
+    X(USER4)                                                                                           \
+    X(USER5)                                                                                           \
+    X(USER6)                                                                                           \
+    X(USER7)                                                                                           \
+    X(USER8)                                                                                           \
+    X(USER9)                                                                                           \
+    X(USER10)                                                                                          \
+    X(USER11)
 
 #define FAST3D_PROF_COUNTERS(X)                                          \
     X(TRIS_IN)          /* GfxSpTri1 calls */                            \
@@ -55,8 +63,12 @@ namespace Fast::Prof {
     X(SYNC_READBACK)    /* ... a framebuffer or depth readback */        \
     X(COMBINERS_MADE)   /* color combiners generated */                  \
     X(SHADERS_MADE)     /* shader programs generated */                  \
-    X(COMMANDS)         /* display-list commands run */                  \
-    X(DROPPED_FRAMES)   /* frames IsFrameReady refused */
+    X(USER_A)           /* named by SetUserCounterName */                \
+    X(USER_B)                                                            \
+    X(USER_C)                                                            \
+    X(USER_D)                                                            \
+    X(COMMANDS)       /* display-list commands run */                    \
+    X(DROPPED_FRAMES) /* frames IsFrameReady refused */
 
 enum Stage : uint8_t {
 #define X(name) STAGE_##name,
@@ -76,15 +88,20 @@ enum Counter : uint8_t {
 // default to off. Each one removes or changes a piece of the frame so the effect on its time says
 // what that piece costs. See profiler.cpp for what each does.
 struct Experiments {
-    int skip_tris = 0;      // GfxSpTri1 returns at once: no triangles reach the buffer
-    int tri_limit = 0;      // emit at most this many triangles a frame (0 = no limit)
-    int skip_draw = 0;      // Flush never calls the backend's DrawTriangles
-    int point_filter = 0;   // force point sampling
-    int no_blend = 0;       // never enable alpha blending
-    int no_depth = 0;       // never enable depth test or mask
-    int no_fog = 0;         // drop fog from every shader
-    int measure_gpu = 0;    // wait for the GPU after the display list, so GPU_SYNC shows its time
-    int swap_interval = 0;  // override the swap interval (1 = every vsync) on Wii U
+    int skip_tris = 0;     // GfxSpTri1 returns at once: no triangles reach the buffer
+    int tri_limit = 0;     // emit at most this many triangles a frame (0 = no limit)
+    int skip_draw = 0;     // Flush never calls the backend's DrawTriangles
+    int point_filter = 0;  // force point sampling
+    int no_blend = 0;      // never enable alpha blending
+    int no_depth = 0;      // never enable depth test or mask
+    int no_fog = 0;        // drop fog from every shader
+    int measure_gpu = 0;   // wait for the GPU after the display list, so GPU_SYNC shows its time
+    int swap_interval = 0; // override the swap interval (1 = every vsync) on Wii U
+    // Switches the game defines and names (SetUserExperimentName); they join the cycle.
+    int user0 = 0;
+    int user1 = 0;
+    int user2 = 0;
+    int user3 = 0;
     float resolution = 0.f; // internal resolution multiplier (0 = leave the setting)
 };
 
@@ -103,6 +120,9 @@ void Exit();
 void Switch(Stage stage);
 void Count(Counter counter, uint64_t n = 1);
 void SetUserStageName(Stage userStage, const char* name);
+void SetUserCounterName(Counter userCounter, const char* name);
+// Names game-defined experiment `index` (0 to 3), so `--exp <name>` switches it on.
+void SetUserExperimentName(int index, const char* name);
 // Attributes the time the RUN stage spends on its own to the display-list command being run.
 void OpcodeBegin(int8_t opcode);
 void OpcodeEnd();

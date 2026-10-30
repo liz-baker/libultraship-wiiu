@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 
@@ -67,7 +68,13 @@ struct State {
     uint64_t lastT = 0;
     uint64_t stageTicks[STAGE_COUNT] = {};
     uint64_t counters[COUNTER_COUNT] = {};
-    const char* userNames[4] = { "USER0", "USER1", "USER2", "USER3" };
+    const char* userNames[12] = { "USER0", "USER1", "USER2", "USER3", "USER4",  "USER5",
+                                  "USER6", "USER7", "USER8", "USER9", "USER10", "USER11" };
+    const char* userCounterNames[4] = { "USER_A", "USER_B", "USER_C", "USER_D" };
+    const char* userExperimentNames[4] = {};
+    // Names `--exp` gave that nothing has claimed yet: the game registers its own after the arguments
+    // are parsed.
+    std::vector<std::pair<std::string, double>> pendingExperiments;
     std::thread::id owner;
     bool started = false;
 
@@ -111,12 +118,48 @@ const CycleStep kCycle[] = {
     { "measure_gpu", [](Experiments& e) { e.measure_gpu = 1; } },
     { "swap_interval=1", [](Experiments& e) { e.swap_interval = 1; } },
 };
-constexpr int kCycleExperiments = sizeof(kCycle) / sizeof(kCycle[0]) - 1;
-// Every other step is the baseline, so each experiment has a reference taken right beside it.
-const CycleStep& StepFor(int step) {
-    return step % 2 == 0 ? kCycle[0] : kCycle[1 + (step / 2) % kCycleExperiments];
+constexpr int kFixedExperiments = sizeof(kCycle) / sizeof(kCycle[0]) - 1;
+
+// The experiments the game named come after the fixed ones.
+int NamedUserExperiment(int nth) {
+    for (int i = 0; i < 4; i++) {
+        if (s.userExperimentNames[i] && nth-- == 0) {
+            return i;
+        }
+    }
+    return -1;
 }
-constexpr int kCycleSteps = 2 * kCycleExperiments;
+int CycleExperiments() {
+    int n = kFixedExperiments;
+    for (int i = 0; i < 4; i++) {
+        n += s.userExperimentNames[i] != nullptr;
+    }
+    return n;
+}
+// Every other step is the baseline, so each experiment has a reference taken right beside it.
+int CycleSteps() {
+    return 2 * CycleExperiments();
+}
+const char* StepLabel(int step) {
+    if (step % 2 == 0) {
+        return kCycle[0].label;
+    }
+    const int k = (step / 2) % CycleExperiments();
+    return k < kFixedExperiments ? kCycle[1 + k].label
+                                 : s.userExperimentNames[NamedUserExperiment(k - kFixedExperiments)];
+}
+void ApplyStep(int step, Experiments& e) {
+    if (step % 2 == 0) {
+        return;
+    }
+    const int k = (step / 2) % CycleExperiments();
+    if (k < kFixedExperiments) {
+        kCycle[1 + k].apply(e);
+        return;
+    }
+    int* const users[4] = { &e.user0, &e.user1, &e.user2, &e.user3 };
+    *users[NamedUserExperiment(k - kFixedExperiments)] = 1;
+}
 
 void Account(uint64_t t) {
     const uint64_t dt = t - s.lastT;
@@ -161,6 +204,10 @@ void PrintExperiments() {
     SHOW("no_fog", no_fog, "%d")
     SHOW("measure_gpu", measure_gpu, "%d")
     SHOW("swap_interval", swap_interval, "%d")
+    SHOW("user0", user0, "%d")
+    SHOW("user1", user1, "%d")
+    SHOW("user2", user2, "%d")
+    SHOW("user3", user3, "%d")
     SHOW("res", resolution, "%.2f")
 #undef SHOW
     Emit(line == "[prof] experiments:" ? "[prof] experiments: none" : line);
@@ -188,7 +235,7 @@ void Report(uint64_t now) {
         if (s.stageTicks[i] == 0) {
             continue;
         }
-        const char* name = i >= STAGE_USER0 && i <= STAGE_USER3 ? s.userNames[i - STAGE_USER0] : kStageNames[i];
+        const char* name = i >= STAGE_USER0 && i <= STAGE_USER11 ? s.userNames[i - STAGE_USER0] : kStageNames[i];
         snprintf(buf, sizeof(buf), " %s=%.2f", name, s.stageTicks[i] / frames / perMs);
         line += buf;
         if (++onLine == 8) {
@@ -210,7 +257,9 @@ void Report(uint64_t now) {
         if (i == COUNTER_UPLOAD_BYTES) {
             snprintf(buf, sizeof(buf), " UPLOAD_KB=%.1f", s.counters[i] / frames / 1024.0);
         } else {
-            snprintf(buf, sizeof(buf), " %s=%.1f", kCounterNames[i], s.counters[i] / frames);
+            const char* name =
+                i >= COUNTER_USER_A && i <= COUNTER_USER_D ? s.userCounterNames[i - COUNTER_USER_A] : kCounterNames[i];
+            snprintf(buf, sizeof(buf), " %s=%.1f", name, s.counters[i] / frames);
         }
         line += buf;
         if (++onLine == 6) {
@@ -280,6 +329,14 @@ bool SetExperiment(const char* name, double value) {
         { "swap_interval", &gExp.swap_interval, nullptr },
         { "res", nullptr, &gExp.resolution },
     };
+    int* const users[4] = { &gExp.user0, &gExp.user1, &gExp.user2, &gExp.user3 };
+    for (int i = 0; i < 4; i++) {
+        const std::string generic = "user" + std::to_string(i);
+        if (generic == name || (s.userExperimentNames[i] && strcmp(s.userExperimentNames[i], name) == 0)) {
+            *users[i] = static_cast<int>(value);
+            return true;
+        }
+    }
     if (strcmp(name, "cycle") == 0) {
         s.cycleSeconds = static_cast<int>(value);
         return true;
@@ -294,7 +351,8 @@ bool SetExperiment(const char* name, double value) {
             return true;
         }
     }
-    return false;
+    s.pendingExperiments.emplace_back(name, value);
+    return true;
 }
 
 bool SetExperimentFromArg(const char* nameEqualsValue) {
@@ -359,8 +417,30 @@ void OpcodeEnd() {
     s.curOpcode = -1;
 }
 
+void SetUserCounterName(Counter userCounter, const char* name) {
+    if (userCounter >= COUNTER_USER_A && userCounter <= COUNTER_USER_D) {
+        s.userCounterNames[userCounter - COUNTER_USER_A] = name;
+    }
+}
+
+void SetUserExperimentName(int index, const char* name) {
+    if (index < 0 || index >= 4) {
+        return;
+    }
+    s.userExperimentNames[index] = name;
+    for (size_t i = 0; i < s.pendingExperiments.size();) {
+        if (s.pendingExperiments[i].first == name) {
+            const double value = s.pendingExperiments[i].second;
+            s.pendingExperiments.erase(s.pendingExperiments.begin() + i);
+            SetExperiment(name, value);
+        } else {
+            i++;
+        }
+    }
+}
+
 void SetUserStageName(Stage userStage, const char* name) {
-    if (userStage >= STAGE_USER0 && userStage <= STAGE_USER3) {
+    if (userStage >= STAGE_USER0 && userStage <= STAGE_USER11) {
         s.userNames[userStage - STAGE_USER0] = name;
     }
 }
@@ -368,11 +448,14 @@ void SetUserStageName(Stage userStage, const char* name) {
 void FrameBegin() {
     if (!s.started) {
         Start();
+        for (const auto& pending : s.pendingExperiments) {
+            Emit("[prof] unknown experiment ignored: " + pending.first);
+        }
         s.base = gExp;
         PrintExperiments();
         if (s.cycleSeconds > 0) {
             Emit("[prof] cycle step 0: baseline");
-            Emit("[prof] cycle: " + std::to_string(s.cycleSeconds) + "s per step, " + std::to_string(kCycleSteps) +
+            Emit("[prof] cycle: " + std::to_string(s.cycleSeconds) + "s per step, " + std::to_string(CycleSteps()) +
                  " steps, repeating");
         }
     }
@@ -400,10 +483,10 @@ void FrameEnd() {
         Report(t);
         if (s.cycleSeconds > 0 && ++s.cycleWindow >= s.cycleSeconds) {
             s.cycleWindow = 0;
-            s.cycleStep = (s.cycleStep + 1) % kCycleSteps;
+            s.cycleStep = (s.cycleStep + 1) % CycleSteps();
             gExp = s.base;
-            StepFor(s.cycleStep).apply(gExp);
-            Emit(std::string("[prof] cycle step ") + std::to_string(s.cycleStep) + ": " + StepFor(s.cycleStep).label);
+            ApplyStep(s.cycleStep, gExp);
+            Emit(std::string("[prof] cycle step ") + std::to_string(s.cycleStep) + ": " + StepLabel(s.cycleStep));
         }
     }
 }
