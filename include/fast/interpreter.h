@@ -441,7 +441,7 @@ struct MipChain {
 // What GfxSpTri1 works out from the RDP and RSP state alone, before it looks at a triangle's
 // vertices: the color combiner, the mip chain, and the size and clamp setup of each sampled
 // texture. Draws in a display list mostly repeat the same state, so the result is kept until one
-// of its inputs (TriDrawKey) changes.
+// of its inputs (TriDrawKey) changes. The reuse is compiled in only with FAST3D_TRI_DRAW_CACHE.
 struct TriDrawState {
     bool use_alpha, use_fog, use_blend_color, use_grayscale;
     bool lodDetail, lodSharpen, useMipChain, same_size_fake_mip;
@@ -690,8 +690,6 @@ class Interpreter {
     TriDrawKey mTriDrawKey;
     TriDrawState mTriDraw;
     bool mTriDrawValid = false;
-    // Re-derive on every draw and abort if the cached state differs (FAST3D_VERIFY_TRI_CACHE=1).
-    bool mVerifyTriDraw = false;
 
     const std::unordered_map<Mtx*, MtxF>* mCurMtxReplacements;
     bool mMarkerOn; // This was originally a debug feature. Now it seems to control s2dex?

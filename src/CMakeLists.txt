@@ -202,6 +202,13 @@ if(COMPONENT_THREAD_SAFE)
     target_compile_definitions(libultraship PUBLIC COMPONENT_THREAD_SAFE)
 endif()
 
+if(FAST3D_TRI_DRAW_CACHE)
+    target_compile_definitions(libultraship PRIVATE FAST3D_TRI_DRAW_CACHE)
+    if(FAST3D_TRI_DRAW_CACHE_VERIFY)
+        target_compile_definitions(libultraship PRIVATE FAST3D_TRI_DRAW_CACHE_VERIFY)
+    endif()
+endif()
+
 target_compile_definitions(libultraship PRIVATE ${GBI_UCODE})
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")

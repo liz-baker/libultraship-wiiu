@@ -13,6 +13,8 @@ option(COMPONENT_THREAD_SAFE "Enable thread safety for Component parent/child li
 option(DISABLE_DLL_LOADER "Disable dynamic library loading support" OFF)
 option(ENABLE_SCRIPTING "Enable TCC-based C mod compilation and scripting system" OFF)
 option(ENABLE_TCC_COMPILER "Build the TCC compiler for compiling mod C sources at runtime (OFF = prebuilt mod binaries only)" ON)
+option(FAST3D_TRI_DRAW_CACHE "Reuse the state GfxSpTri1 derives from the RDP across triangles while its inputs are unchanged" OFF)
+option(FAST3D_TRI_DRAW_CACHE_VERIFY "With FAST3D_TRI_DRAW_CACHE, re-derive on every reuse and abort if it differs (slow; for testing)" OFF)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     option(SIGN_LIBRARY "Enable xcode signing" OFF)

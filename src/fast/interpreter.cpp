@@ -2185,6 +2185,7 @@ void Interpreter::GfxSpModifyVertex(uint16_t vtx_idx, uint8_t where, uint32_t va
     v->v = t;
 }
 
+#ifdef FAST3D_TRI_DRAW_CACHE
 void Interpreter::BuildTriDrawKey(TriDrawKey& k) const {
     memset(&k, 0, sizeof(k));
     k.other_mode_l = mRdp->other_mode_l;
@@ -2231,7 +2232,9 @@ void Interpreter::BuildTriDrawKey(TriDrawKey& k) const {
         out.tmem_index = in.tmem_index;
     }
 }
+#endif
 
+#ifdef FAST3D_TRI_DRAW_CACHE_VERIFY
 // The name of the first field that differs, or nullptr when the states match.
 static const char* TriDrawStateDiff(const TriDrawState& a, const TriDrawState& b) {
 #define DIFF(f)     \
@@ -2270,6 +2273,7 @@ static const char* TriDrawStateDiff(const TriDrawState& a, const TriDrawState& b
 #undef DIFF
     return nullptr;
 }
+#endif
 
 // Reads only what BuildTriDrawKey captures, so a draw whose key is unchanged gets the same result.
 void Interpreter::DeriveTriDrawState(TriDrawState& s) {
@@ -2597,13 +2601,16 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRdp->viewport_or_scissor_changed = false;
     }
 
+#ifdef FAST3D_TRI_DRAW_CACHE
     TriDrawKey drawKey;
     BuildTriDrawKey(drawKey);
     if (!mTriDrawValid || memcmp(&drawKey, &mTriDrawKey, sizeof(drawKey)) != 0) {
         DeriveTriDrawState(mTriDraw);
         mTriDrawKey = drawKey;
         mTriDrawValid = true;
-    } else if (mVerifyTriDraw) {
+    }
+#ifdef FAST3D_TRI_DRAW_CACHE_VERIFY
+    else {
         TriDrawState fresh;
         DeriveTriDrawState(fresh);
         if (const char* field = TriDrawStateDiff(fresh, mTriDraw)) {
@@ -2611,6 +2618,10 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             abort();
         }
     }
+#endif
+#else
+    DeriveTriDrawState(mTriDraw);
+#endif
     const TriDrawState& s = mTriDraw;
     ColorCombiner* comb = s.comb;
     const bool use_alpha = s.use_alpha;
@@ -5830,12 +5841,16 @@ void Interpreter::SpReset() {
 
 void Interpreter::RegisterFbTexture(const void* cpuAddr, int fbId) {
     mFbTextures[(uintptr_t)cpuAddr] = fbId;
+#ifdef FAST3D_TRI_DRAW_CACHE
     mFbTexturesGeneration++;
+#endif
 }
 
 void Interpreter::UnregisterFbTexture(const void* cpuAddr) {
     mFbTextures.erase((uintptr_t)cpuAddr);
+#ifdef FAST3D_TRI_DRAW_CACHE
     mFbTexturesGeneration++;
+#endif
 }
 
 void Interpreter::GetDimensions(uint32_t* width, uint32_t* height, int32_t* posX, int32_t* posY) {
@@ -5849,7 +5864,6 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
     mWapi = wapi;
     mRapi = rapi;
     mResourceManager = std::move(resourceManager);
-    mVerifyTriDraw = std::getenv("FAST3D_VERIFY_TRI_CACHE") != nullptr;
     sResourceManager = mResourceManager;
     mConsoleVariable = std::move(consoleVariable);
     mWapi->Init(game_name, rapi->GetName(), start_in_fullscreen, width, height, posX, posY);
