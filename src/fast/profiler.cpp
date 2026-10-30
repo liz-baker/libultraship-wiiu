@@ -76,8 +76,41 @@ struct State {
     uint64_t frameSumTicks = 0;
     uint64_t buckets[4] = {};
     bool printedExperiments = false;
+
+    // --exp cycle=N: every N reported seconds the next entry of kCycle replaces the experiments given
+    // on the command line, which come back for the first entry.
+    int cycleSeconds = 0;
+    int cycleWindow = 0;
+    int cycleStep = 0;
+    Experiments base;
 };
 State s;
+
+struct CycleStep {
+    const char* label;
+    void (*apply)(Experiments&);
+};
+
+// Each step changes one thing so the difference from "baseline" is that thing's cost. The steps
+// that remove work (skip_*, tri_limit) change what is on screen.
+const CycleStep kCycle[] = {
+    { "baseline", [](Experiments&) {} },
+    { "skip_draw", [](Experiments& e) { e.skip_draw = 1; } },
+    { "skip_tris", [](Experiments& e) { e.skip_tris = 1; } },
+    { "tri_limit=500", [](Experiments& e) { e.tri_limit = 500; } },
+    { "no_blend", [](Experiments& e) { e.no_blend = 1; } },
+    { "no_depth", [](Experiments& e) { e.no_depth = 1; } },
+    { "no_fog", [](Experiments& e) { e.no_fog = 1; } },
+    { "point_filter", [](Experiments& e) { e.point_filter = 1; } },
+    { "measure_gpu", [](Experiments& e) { e.measure_gpu = 1; } },
+    { "swap_interval=1", [](Experiments& e) { e.swap_interval = 1; } },
+};
+constexpr int kCycleExperiments = sizeof(kCycle) / sizeof(kCycle[0]) - 1;
+// Every other step is the baseline, so each experiment has a reference taken right beside it.
+const CycleStep& StepFor(int step) {
+    return step % 2 == 0 ? kCycle[0] : kCycle[1 + (step / 2) % kCycleExperiments];
+}
+constexpr int kCycleSteps = 2 * kCycleExperiments;
 
 bool Mine() {
     return s.started && std::this_thread::get_id() == s.owner;
@@ -206,6 +239,10 @@ bool SetExperiment(const char* name, double value) {
         { "swap_interval", &gExp.swap_interval, nullptr },
         { "res", nullptr, &gExp.resolution },
     };
+    if (strcmp(name, "cycle") == 0) {
+        s.cycleSeconds = static_cast<int>(value);
+        return true;
+    }
     for (const Entry& e : entries) {
         if (strcmp(name, e.name) == 0) {
             if (e.i) {
@@ -277,7 +314,13 @@ void SetUserStageName(Stage userStage, const char* name) {
 void FrameBegin() {
     if (!s.started) {
         Start();
+        s.base = gExp;
         PrintExperiments();
+        if (s.cycleSeconds > 0) {
+            Emit("[prof] cycle step 0: baseline");
+            Emit("[prof] cycle: " + std::to_string(s.cycleSeconds) + "s per step, " + std::to_string(kCycleSteps) +
+                 " steps, repeating");
+        }
     }
 }
 
@@ -301,6 +344,13 @@ void FrameEnd() {
 
     if (t - s.windowStart >= static_cast<uint64_t>(TicksPerMs() * 1000.0)) {
         Report(t);
+        if (s.cycleSeconds > 0 && ++s.cycleWindow >= s.cycleSeconds) {
+            s.cycleWindow = 0;
+            s.cycleStep = (s.cycleStep + 1) % kCycleSteps;
+            gExp = s.base;
+            StepFor(s.cycleStep).apply(gExp);
+            Emit(std::string("[prof] cycle step ") + std::to_string(s.cycleStep) + ": " + StepFor(s.cycleStep).label);
+        }
     }
 }
 
