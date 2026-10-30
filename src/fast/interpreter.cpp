@@ -29,6 +29,7 @@
 #include "fast/types.h"
 #include <string>
 
+#include "fast/profiler.h"
 #include "fast/interpreter.h"
 #include "fast/lus_gbi.h"
 #include "fast/backends/gfx_window_manager_api.h"
@@ -141,10 +142,23 @@ void GfxSetInstance(std::shared_ptr<Interpreter> gfx) {
 // N64 prim_depth is 15-bit (0 near, 0x7FFF far).
 static constexpr float N64_PRIM_DEPTH_MAX = 32767.0f;
 
+#ifdef FAST3D_PROFILE
+static int sProfTrisThisFrame = 0;
+#endif
+
 void Interpreter::Flush() {
     if (mBufVboLen > 0) {
+        PROF_SCOPE(FLUSH);
+        PROF_COUNT(FLUSHES);
         mRapi->SetCurrentPrimDepth((float)mRdp->prim_depth / N64_PRIM_DEPTH_MAX);
-        mRapi->DrawTriangles(mBufVbo, mBufVboLen, mBufVboNumTris);
+#ifdef FAST3D_PROFILE
+        if (!PROF_EXP(skip_draw))
+#endif
+        {
+            PROF_SCOPE(DRAW);
+            PROF_COUNT(DRAWS);
+            mRapi->DrawTriangles(mBufVbo, mBufVboLen, mBufVboNumTris);
+        }
         mBufVboLen = 0;
         mBufVboNumTris = 0;
     }
@@ -1595,6 +1609,7 @@ static void ResampleRgba8(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint
 }
 
 void Interpreter::ImportMipChain(const MipChain& chain) {
+    PROF_SCOPE(IMPORT);
     size_t totalBytes = 0;
     for (uint8_t n = 0; n < chain.numLevels; n++) {
         totalBytes += (size_t)chain.levels[n].gpuWidth * chain.levels[n].gpuHeight * 4;
@@ -1647,6 +1662,8 @@ bool Interpreter::CanImportMipChain(int tile) const {
 }
 
 void Interpreter::ImportTexture(int i, int tile, bool importReplacement, const MipChain* mipChain) {
+    PROF_SCOPE(IMPORT);
+    PROF_COUNT(IMPORTS);
     uint8_t fmt = mRdp->texture_tile[tile].fmt;
     uint8_t siz = mRdp->texture_tile[tile].siz;
     uint32_t texFlags = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tex_flags;
@@ -1800,6 +1817,7 @@ void Interpreter::ImportTexture(int i, int tile, bool importReplacement, const M
 }
 
 void Interpreter::ImportTextureMask(int i, int tile) {
+    PROF_SCOPE(IMPORT);
     uint32_t tmemIndex = mRdp->texture_tile[tile].tmem_index;
     RawTexMetadata metadata = mRdp->loaded_texture[tmemIndex].raw_tex_metadata;
 
@@ -1987,6 +2005,8 @@ void Interpreter::AdjustWidthHeightForScale(uint32_t& width, uint32_t& height, u
 }
 
 void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx* vertices) {
+    PROF_SCOPE(VTX);
+    PROF_COUNT_N(VERTS, n_vertices);
     for (size_t i = 0; i < n_vertices; i++, dest_index++) {
         const F3DVtx_t* v = &vertices[i].v;
         const F3DVtx_tn* vn = &vertices[i].n;
@@ -2191,10 +2211,19 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     struct LoadedVertex* v3 = &mRsp->loaded_vertices[vtx3_idx];
     struct LoadedVertex* v_arr[3] = { v1, v2, v3 };
 
+    PROF_SCOPE(TRI_CULL);
+    PROF_COUNT(TRIS_IN);
+#ifdef FAST3D_PROFILE
+    if (PROF_EXP(skip_tris) || (PROF_EXP(tri_limit) && sProfTrisThisFrame >= PROF_EXP(tri_limit))) {
+        return;
+    }
+#endif
+
     // if (rand()%2) return;
 
     if (v1->clip_rej & v2->clip_rej & v3->clip_rej) {
         // The whole triangle lies outside the visible area
+        PROF_COUNT(TRIS_CLIP_REJECT);
         return;
     }
 
@@ -2225,14 +2254,17 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
         if (cull_type == cull_front) {
             if (cross <= 0) {
+                PROF_COUNT(TRIS_CULL_REJECT);
                 return;
             }
         } else if (cull_type == cull_back) {
             if (cross >= 0) {
+                PROF_COUNT(TRIS_CULL_REJECT);
                 return;
             }
         } else if (cull_type == cull_both) {
             // Why is this even an option?
+            PROF_COUNT(TRIS_CULL_REJECT);
             return;
         }
     }
@@ -2243,8 +2275,14 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     bool prim_depth_enabled = (mRdp->other_mode_l & G_ZS_PRIM) != 0;
     bool depth_test = (zbuffer_enabled || prim_depth_enabled) && (mRdp->other_mode_l & Z_CMP) == Z_CMP;
     bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
+#ifdef FAST3D_PROFILE
+    if (PROF_EXP(no_depth)) {
+        depth_test = depth_mask = false;
+    }
+#endif
     uint8_t depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
     if (depth_test_and_mask != mRenderingState.depth_test_and_mask) {
+        PROF_COUNT(FLUSH_DEPTH);
         Flush();
         mRapi->SetDepthTestAndMask(depth_test, depth_mask);
         mRenderingState.depth_test_and_mask = depth_test_and_mask;
@@ -2252,6 +2290,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     bool zmode_decal = (mRdp->other_mode_l & ZMODE_DEC) == ZMODE_DEC;
     if (zmode_decal != mRenderingState.decal_mode) {
+        PROF_COUNT(FLUSH_DECAL);
         Flush();
         mRapi->SetZmodeDecal(zmode_decal);
         mRenderingState.decal_mode = zmode_decal;
@@ -2259,11 +2298,13 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     if (mRdp->viewport_or_scissor_changed) {
         if (memcmp(&mRdp->viewport, &mRenderingState.viewport, sizeof(mRdp->viewport)) != 0) {
+            PROF_COUNT(FLUSH_VIEWPORT);
             Flush();
             mRapi->SetViewport(mRdp->viewport.x, mRdp->viewport.y, mRdp->viewport.width, mRdp->viewport.height);
             mRenderingState.viewport = mRdp->viewport;
         }
         if (memcmp(&mRdp->scissor, &mRenderingState.scissor, sizeof(mRdp->scissor)) != 0) {
+            PROF_COUNT(FLUSH_VIEWPORT);
             Flush();
             mRapi->SetScissor(mRdp->scissor.x, mRdp->scissor.y, mRdp->scissor.width, mRdp->scissor.height);
             mRenderingState.scissor = mRdp->scissor;
@@ -2271,6 +2312,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRdp->viewport_or_scissor_changed = false;
     }
 
+    PROF_SWITCH(TRI_STATE);
     uint64_t cc_id = mRdp->combine_mode;
     uint64_t cc_options = 0;
     bool use_alpha = ((mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20) &&
@@ -2288,7 +2330,17 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         (mRdp->other_mode_l & (3 << 24)) == (G_BL_0 << 24) && (mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20);
     bool use_grayscale = mRdp->grayscale;
     bool use_prim_depth = (mRdp->other_mode_l & G_ZS_PRIM) != 0;
+#ifdef FAST3D_PROFILE
+    if (PROF_EXP(no_fog)) {
+        use_fog = use_blend_color = false;
+    }
+#endif
 
+#ifdef FAST3D_PROFILE
+    if (PROF_EXP(no_blend)) {
+        use_alpha = false;
+    }
+#endif
     if (texture_edge) {
         if (use_alpha) {
             alpha_threshold = true;
@@ -2378,6 +2430,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     ColorCombiner* comb = LookupOrCreateColorCombiner(key);
 
     uint32_t tm = 0;
+    PROF_SWITCH(TRI_APPLY);
     uint32_t tex_width[2], tex_height[2], tex_width2[2], tex_height2[2];
     uint32_t effective_tile[2];
 
@@ -2397,6 +2450,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         if (comb->usedTextures[i]) {
             uint8_t mipLevels = chainSlot ? mipChain.numLevels : 0;
             if (mRdp->textures_changed[i] || mRenderingState.mip_levels[i] != mipLevels) {
+                PROF_COUNT(FLUSH_TEXTURE);
                 Flush();
                 mRenderingState.mip_levels[i] = mipLevels;
                 ImportTexture(i, tile, false, chainSlot ? &mipChain : nullptr);
@@ -2500,8 +2554,14 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             }
 
             bool linear_filter = (mRdp->other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
+#ifdef FAST3D_PROFILE
+            if (PROF_EXP(point_filter)) {
+                linear_filter = false;
+            }
+#endif
             if (linear_filter != mRenderingState.mTextures[i]->second.linear_filter ||
                 cms != mRenderingState.mTextures[i]->second.cms || cmt != mRenderingState.mTextures[i]->second.cmt) {
+                PROF_COUNT(FLUSH_SAMPLER);
                 Flush();
 
                 // Set the same sampler params on the blended texture. Needed for opengl.
@@ -2532,12 +2592,14 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             LookupOrCreateShaderProgram(comb->shader_id0, comb->shader_id1 | tm * SHADER_OPT(TEXEL0_CLAMP_S));
     }
     if (prg != mRenderingState.mShaderProgram) {
+        PROF_COUNT(FLUSH_SHADER);
         Flush();
         mRapi->UnloadShader(mRenderingState.mShaderProgram);
         mRapi->LoadShader(prg);
         mRenderingState.mShaderProgram = prg;
     }
     if (use_alpha != mRenderingState.alpha_blend) {
+        PROF_COUNT(FLUSH_BLEND);
         Flush();
         mRapi->SetUseAlpha(use_alpha);
         mRenderingState.alpha_blend = use_alpha;
@@ -2545,6 +2607,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     if (lodDetail || lodSharpen) {
         const float primLodMin = mRdp->prim_lod_min / 32.0f;
         if (primLodMin != mRenderingState.prim_lod_min) {
+            PROF_COUNT(FLUSH_BLEND);
             Flush();
             mRapi->SetTexturePrimLodMin(primLodMin);
             mRenderingState.prim_lod_min = primLodMin;
@@ -2555,6 +2618,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     mRapi->ShaderGetInfo(prg, &numInputs, usedTextures);
 
+    PROF_SWITCH(TRI_EMIT);
     struct GfxClipParameters clip_parameters = mRapi->GetClipParameters();
 
     for (int i = 0; i < 3; i++) {
@@ -2753,8 +2817,13 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         // mBufVbo[mBufVboLen++] = color->a / 255.0f;
     }
 
+    PROF_COUNT(TRIS_EMITTED);
+#ifdef FAST3D_PROFILE
+    sProfTrisThisFrame++;
+#endif
     if (++mBufVboNumTris == MAX_TRI_BUFFER) {
         // if (++mBufVbo_num_tris == 1) {
+        PROF_COUNT(FLUSH_FULL);
         Flush();
     }
 }
@@ -5711,6 +5780,11 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
     mRapi->UpdateFramebufferParameters(0, width, height, 1, false, true, true, true);
     mCurDimensions.internal_mul = mConsoleVariable->GetFloat(CVAR_INTERNAL_RESOLUTION, 1);
     mMsaaLevel = mConsoleVariable->GetInteger(CVAR_MSAA_VALUE, 1);
+#ifdef FAST3D_PROFILE
+    if (PROF_EXP(resolution) > 0.0f) {
+        mCurDimensions.internal_mul = PROF_EXP(resolution);
+    }
+#endif
 
     mCurDimensions.width = width;
     mCurDimensions.height = height;
@@ -5887,6 +5961,10 @@ void Interpreter::RunGuiOnly() {
 }
 
 void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_replacements) {
+    PROF_SCOPE(RUN);
+#ifdef FAST3D_PROFILE
+    sProfTrisThisFrame = 0;
+#endif
     SpReset();
 
     mGetPixelDepthPending.clear();
@@ -5926,6 +6004,12 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
     }
 
     Flush();
+#ifdef FAST3D_PROFILE
+    if (PROF_EXP(measure_gpu)) {
+        PROF_SCOPE(GPU_SYNC);
+        mRapi->WaitForGpu();
+    }
+#endif
     mGfxFrameBuffer = 0;
     currentDir = std::stack<std::string>();
 
@@ -5952,10 +6036,16 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
 }
 
 void Interpreter::EndFrame() {
-    mRapi->EndFrame();
-    mWapi->SwapBuffersBegin();
-    mRapi->FinishRender();
+    {
+        PROF_SCOPE(SWAP);
+        mRapi->EndFrame();
+        mWapi->SwapBuffersBegin();
+        mRapi->FinishRender();
+    }
     mWapi->SwapBuffersEnd();
+#ifdef FAST3D_PROFILE
+    Fast::Prof::FrameEnd();
+#endif
 }
 
 void gfx_set_target_ucode(UcodeHandlers ucode) {

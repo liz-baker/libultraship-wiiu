@@ -5,6 +5,7 @@
 #ifdef __WIIU__
 
 #include "fast/backends/gfx_gx2.h"
+#include "fast/profiler.h"
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -205,6 +206,19 @@ static size_t TextureImageBytes(const GX2Surface& surface) {
     return surface.image ? (size_t)surface.imageSize + surface.mipmapSize + surface.alignment : 0;
 }
 
+#ifdef FAST3D_PROFILE
+// Every CPU wait on the GPU goes through here so the profiler sees what caused it.
+#define GPU_WAIT(reason)           \
+    do {                           \
+        PROF_SCOPE(GPU_SYNC);      \
+        PROF_COUNT(GPU_SYNCS);     \
+        PROF_COUNT(SYNC_##reason); \
+        GX2DrawDone();             \
+    } while (0)
+#else
+#define GPU_WAIT(reason) GX2DrawDone()
+#endif
+
 void GfxRenderingAPIGX2::RetireImage(void* image, size_t bytes) {
     if (!image) {
         return;
@@ -219,7 +233,7 @@ void GfxRenderingAPIGX2::RetireImage(void* image, size_t bytes) {
 void GfxRenderingAPIGX2::FreeRetiredImagesNow() {
     // GX2DrawDone() submits everything recorded so far and waits for it, after which nothing in the
     // queue can still read any of these.
-    GX2DrawDone();
+    GPU_WAIT(RETIRE);
     for (auto& retired : mRetiredImages) {
         free(retired.image);
     }
@@ -306,6 +320,7 @@ void GfxRenderingAPIGX2::SelectTexture(int tile, uint32_t texture_id) {
 }
 
 void GfxRenderingAPIGX2::UploadTexture(const uint8_t* rgba32_buf, uint32_t width, uint32_t height) {
+    PROF_COUNT_N(UPLOAD_BYTES, (uint64_t)width * height * 4);
     Texture* tex = mCurrentTexture;
     assert(tex);
 
@@ -591,7 +606,7 @@ void GfxRenderingAPIGX2::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
 
     if (mDrawPtr + vbo_len >= mDrawBuffer + DRAW_BUFFER_SIZE) {
         printf("Waiting on GPU!!!\n");
-        GX2DrawDone();
+        GPU_WAIT(DRAWBUF);
         mDrawPtr = mDrawBuffer;
     }
 
@@ -770,6 +785,12 @@ void GfxRenderingAPIGX2::EndFrame() {
 
 void GfxRenderingAPIGX2::FinishRender() {
 }
+
+#ifdef FAST3D_PROFILE
+void GfxRenderingAPIGX2::WaitForGpu() {
+    GX2DrawDone();
+}
+#endif
 
 int GfxRenderingAPIGX2::CreateFramebuffer() {
     assert(mUsedFramebuffers < mFramebuffers.size());
@@ -983,7 +1004,7 @@ void GfxRenderingAPIGX2::ReadFramebufferToCPU(int fb_id, uint32_t width, uint32_
     GX2Invalidate(GX2_INVALIDATE_MODE_CPU_TEXTURE, surface.image, surface.imageSize);
 
     GX2Util::ConvertSurface(&buffer.color_buffer.surface, &surface);
-    GX2DrawDone();
+    GPU_WAIT(READBACK);
 
     gfx_wiiu_set_context_state();
 
@@ -1031,7 +1052,7 @@ GfxRenderingAPIGX2::GetPixelDepth(int fb_id, const std::set<std::pair<float, flo
                          dstPoints);
 
         // Wait for draws to be done and restore context, in case GPU was used
-        GX2DrawDone();
+        GPU_WAIT(READBACK);
         gfx_wiiu_set_context_state();
 
         // read the pixels from the depthReadBuffer

@@ -202,6 +202,10 @@ if(COMPONENT_THREAD_SAFE)
     target_compile_definitions(libultraship PUBLIC COMPONENT_THREAD_SAFE)
 endif()
 
+if(FAST3D_PROFILE)
+    target_compile_definitions(libultraship PUBLIC FAST3D_PROFILE)
+endif()
+
 target_compile_definitions(libultraship PRIVATE ${GBI_UCODE})
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
