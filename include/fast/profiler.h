@@ -37,7 +37,11 @@ namespace Fast::Prof {
     X(USER8)                                                                                           \
     X(USER9)                                                                                           \
     X(USER10)                                                                                          \
-    X(USER11)
+    X(USER11)                                                                                          \
+    X(USER12)                                                                                          \
+    X(USER13)                                                                                          \
+    X(USER14)                                                                                          \
+    X(USER15)
 
 #define FAST3D_PROF_COUNTERS(X)                                          \
     X(TRIS_IN)          /* GfxSpTri1 calls */                            \
@@ -98,10 +102,8 @@ struct Experiments {
     int measure_gpu = 0;   // wait for the GPU after the display list, so GPU_SYNC shows its time
     int swap_interval = 0; // override the swap interval (1 = every vsync) on Wii U
     // Switches the game defines and names (SetUserExperimentName); they join the cycle.
-    int user0 = 0;
-    int user1 = 0;
-    int user2 = 0;
-    int user3 = 0;
+    static constexpr int kUserExperiments = 8;
+    int user[kUserExperiments] = {};
     float resolution = 0.f; // internal resolution multiplier (0 = leave the setting)
 };
 
@@ -121,13 +123,17 @@ void Switch(Stage stage);
 void Count(Counter counter, uint64_t n = 1);
 void SetUserStageName(Stage userStage, const char* name);
 void SetUserCounterName(Counter userCounter, const char* name);
-// Names game-defined experiment `index` (0 to 3), so `--exp <name>` switches it on.
+// Names game-defined experiment `index` (0 to 7), so `--exp <name>` switches it on.
 void SetUserExperimentName(int index, const char* name);
 // Attributes the time the RUN stage spends on its own to the display-list command being run.
 void OpcodeBegin(int8_t opcode);
 void OpcodeEnd();
 // Marks the start of a frame's rendering work; logs the totals once a second.
 void FrameBegin();
+// Logs a line with the profiler's other output.
+void Note(const char* line);
+// Called once a second, just before the totals are logged (not from a hot path).
+void SetReportHook(void (*hook)());
 void FrameEnd();
 
 struct Scope {

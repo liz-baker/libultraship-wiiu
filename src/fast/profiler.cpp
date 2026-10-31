@@ -68,15 +68,18 @@ struct State {
     uint64_t lastT = 0;
     uint64_t stageTicks[STAGE_COUNT] = {};
     uint64_t counters[COUNTER_COUNT] = {};
-    const char* userNames[12] = { "USER0", "USER1", "USER2", "USER3", "USER4",  "USER5",
-                                  "USER6", "USER7", "USER8", "USER9", "USER10", "USER11" };
+    const char* userNames[16] = { "USER0", "USER1", "USER2",  "USER3",  "USER4",  "USER5",  "USER6",  "USER7",
+                                  "USER8", "USER9", "USER10", "USER11", "USER12", "USER13", "USER14", "USER15" };
     const char* userCounterNames[4] = { "USER_A", "USER_B", "USER_C", "USER_D" };
-    const char* userExperimentNames[4] = {};
+    const char* userExperimentNames[Experiments::kUserExperiments] = {};
     // Names `--exp` gave that nothing has claimed yet: the game registers its own after the arguments
     // are parsed.
     std::vector<std::pair<std::string, double>> pendingExperiments;
     std::thread::id owner;
     bool started = false;
+    // The report allocates (logging), and those allocations must not be timed into the totals it is
+    // printing.
+    bool reporting = false;
 
     uint64_t frames = 0;
     uint64_t windowStart = 0;
@@ -122,7 +125,7 @@ constexpr int kFixedExperiments = sizeof(kCycle) / sizeof(kCycle[0]) - 1;
 
 // The experiments the game named come after the fixed ones.
 int NamedUserExperiment(int nth) {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < Experiments::kUserExperiments; i++) {
         if (s.userExperimentNames[i] && nth-- == 0) {
             return i;
         }
@@ -131,7 +134,7 @@ int NamedUserExperiment(int nth) {
 }
 int CycleExperiments() {
     int n = kFixedExperiments;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < Experiments::kUserExperiments; i++) {
         n += s.userExperimentNames[i] != nullptr;
     }
     return n;
@@ -157,8 +160,7 @@ void ApplyStep(int step, Experiments& e) {
         kCycle[1 + k].apply(e);
         return;
     }
-    int* const users[4] = { &e.user0, &e.user1, &e.user2, &e.user3 };
-    *users[NamedUserExperiment(k - kFixedExperiments)] = 1;
+    e.user[NamedUserExperiment(k - kFixedExperiments)] = 1;
 }
 
 void Account(uint64_t t) {
@@ -170,11 +172,13 @@ void Account(uint64_t t) {
 }
 
 bool Mine() {
-    return s.started && std::this_thread::get_id() == s.owner;
+    return s.started && !s.reporting && std::this_thread::get_id() == s.owner;
 }
 
 // The logger reaches the UDP log on the Wii U too (stdout is redirected there), so this is the only
 // output; writing each line twice overran the UDP socket.
+void (*gReportHook)() = nullptr;
+
 void Emit(const std::string& line) {
     spdlog::info("{}", line);
 }
@@ -204,16 +208,23 @@ void PrintExperiments() {
     SHOW("no_fog", no_fog, "%d")
     SHOW("measure_gpu", measure_gpu, "%d")
     SHOW("swap_interval", swap_interval, "%d")
-    SHOW("user0", user0, "%d")
-    SHOW("user1", user1, "%d")
-    SHOW("user2", user2, "%d")
-    SHOW("user3", user3, "%d")
+    for (int i = 0; i < Experiments::kUserExperiments; i++) {
+        if (gExp.user[i]) {
+            snprintf(buf, sizeof(buf), " %s=%d", s.userExperimentNames[i] ? s.userExperimentNames[i] : "user",
+                     gExp.user[i]);
+            line += buf;
+        }
+    }
     SHOW("res", resolution, "%.2f")
 #undef SHOW
     Emit(line == "[prof] experiments:" ? "[prof] experiments: none" : line);
 }
 
 void Report(uint64_t now) {
+    s.reporting = true;
+    if (gReportHook) {
+        gReportHook();
+    }
     const double perMs = TicksPerMs();
     const double seconds = (now - s.windowStart) / (perMs * 1000.0);
     const double frames = static_cast<double>(s.frames);
@@ -235,7 +246,7 @@ void Report(uint64_t now) {
         if (s.stageTicks[i] == 0) {
             continue;
         }
-        const char* name = i >= STAGE_USER0 && i <= STAGE_USER11 ? s.userNames[i - STAGE_USER0] : kStageNames[i];
+        const char* name = i >= STAGE_USER0 && i <= STAGE_USER15 ? s.userNames[i - STAGE_USER0] : kStageNames[i];
         snprintf(buf, sizeof(buf), " %s=%.2f", name, s.stageTicks[i] / frames / perMs);
         line += buf;
         if (++onLine == 8) {
@@ -307,6 +318,8 @@ void Report(uint64_t now) {
     s.frameMaxTicks = 0;
     s.frameSumTicks = 0;
     s.windowStart = now;
+    s.lastT = Now();
+    s.reporting = false;
 }
 
 } // namespace
@@ -329,11 +342,10 @@ bool SetExperiment(const char* name, double value) {
         { "swap_interval", &gExp.swap_interval, nullptr },
         { "res", nullptr, &gExp.resolution },
     };
-    int* const users[4] = { &gExp.user0, &gExp.user1, &gExp.user2, &gExp.user3 };
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < Experiments::kUserExperiments; i++) {
         const std::string generic = "user" + std::to_string(i);
         if (generic == name || (s.userExperimentNames[i] && strcmp(s.userExperimentNames[i], name) == 0)) {
-            *users[i] = static_cast<int>(value);
+            gExp.user[i] = static_cast<int>(value);
             return true;
         }
     }
@@ -417,6 +429,14 @@ void OpcodeEnd() {
     s.curOpcode = -1;
 }
 
+void Note(const char* line) {
+    Emit(line);
+}
+
+void SetReportHook(void (*hook)()) {
+    gReportHook = hook;
+}
+
 void SetUserCounterName(Counter userCounter, const char* name) {
     if (userCounter >= COUNTER_USER_A && userCounter <= COUNTER_USER_D) {
         s.userCounterNames[userCounter - COUNTER_USER_A] = name;
@@ -424,7 +444,7 @@ void SetUserCounterName(Counter userCounter, const char* name) {
 }
 
 void SetUserExperimentName(int index, const char* name) {
-    if (index < 0 || index >= 4) {
+    if (index < 0 || index >= Experiments::kUserExperiments) {
         return;
     }
     s.userExperimentNames[index] = name;
@@ -440,7 +460,7 @@ void SetUserExperimentName(int index, const char* name) {
 }
 
 void SetUserStageName(Stage userStage, const char* name) {
-    if (userStage >= STAGE_USER0 && userStage <= STAGE_USER11) {
+    if (userStage >= STAGE_USER0 && userStage <= STAGE_USER15) {
         s.userNames[userStage - STAGE_USER0] = name;
     }
 }
