@@ -4221,67 +4221,6 @@ bool gfx_vtx_handler_f3d(F3DGfx** cmd0) {
     return false;
 }
 
-#ifdef FAST3D_PROFILE
-// The hash display-list commands look their resource up on every call: a hash to name lookup, a
-// string build and a promise/future round trip through the resource manager, a few microseconds each.
-// With the hash_cache experiment the results are remembered here. Entries hold the resource, so a
-// cached pointer cannot outlive it; the cache is emptied every few hundred frames so a reloaded
-// archive is picked up.
-struct HashedResource {
-    std::shared_ptr<Ship::IResource> resource;
-    void* raw;
-};
-struct HashedTexture {
-    const char* name;
-    std::shared_ptr<Fast::Texture> texture;
-};
-static std::unordered_map<uint64_t, HashedResource> sHashedResources;
-static std::unordered_map<uint64_t, HashedTexture> sHashedTextures;
-#endif
-
-static void* RawPointerByHash(uint64_t hash) {
-#ifdef FAST3D_PROFILE
-    if (PROF_EXP(hash_cache)) {
-        const auto it = sHashedResources.find(hash);
-        if (it != sHashedResources.end()) {
-            return it->second.raw;
-        }
-        auto resource = sResourceManager->LoadResource(hash);
-        void* raw = sResourceManager->GetResourceRawPointer(resource);
-        if (raw != nullptr) {
-            sHashedResources.emplace(hash, HashedResource{ std::move(resource), raw });
-        }
-        return raw;
-    }
-#endif
-    return sResourceManager->GetResourceRawPointer(hash);
-}
-
-static std::shared_ptr<Fast::Texture> TextureByHash(uint64_t hash, const char** fileName) {
-    auto archive = sResourceManager->GetArchiveManager();
-#ifdef FAST3D_PROFILE
-    if (PROF_EXP(hash_cache)) {
-        const auto it = sHashedTextures.find(hash);
-        if (it != sHashedTextures.end()) {
-            *fileName = it->second.name;
-            return it->second.texture;
-        }
-    }
-#endif
-    *fileName = archive->HashToCString(hash);
-    if (*fileName == nullptr) {
-        return nullptr;
-    }
-    auto texture =
-        std::static_pointer_cast<Fast::Texture>(sResourceManager->LoadResourceProcess(archive->HashToCString(hash)));
-#ifdef FAST3D_PROFILE
-    if (PROF_EXP(hash_cache) && texture != nullptr) {
-        sHashedTextures.emplace(hash, HashedTexture{ *fileName, texture });
-    }
-#endif
-    return texture;
-}
-
 bool gfx_vtx_hash_handler_custom(F3DGfx** cmd0) {
     Interpreter* gfx = mInstance.lock().get();
     // Offset added to the start of the vertices
@@ -4299,7 +4238,7 @@ bool gfx_vtx_hash_handler_custom(F3DGfx** cmd0) {
         gfx->GfxSpVertex(C0(12, 8), C0(1, 7) - C0(12, 8), (F3DVtx*)offset);
         (*cmd0)++;
     } else {
-        F3DVtx* vtx = (F3DVtx*)RawPointerByHash(hash);
+        F3DVtx* vtx = (F3DVtx*)sResourceManager->GetResourceRawPointer(hash);
 
         if (vtx != NULL) {
             vtx = (F3DVtx*)((char*)vtx + offset);
@@ -4388,7 +4327,7 @@ bool gfx_dl_otr_hash_handler_custom(F3DGfx** cmd0) {
 
     uint64_t hash = ((uint64_t)(*cmd0)->words.w0 << 32) + (*cmd0)->words.w1;
 
-    F3DGfx* gfx = (F3DGfx*)RawPointerByHash(hash);
+    F3DGfx* gfx = (F3DGfx*)sResourceManager->GetResourceRawPointer(hash);
 
     if (C0(16, 1) == 0) {
         // Push return address
@@ -4815,16 +4754,17 @@ bool gfx_set_timg_otr_hash_handler_custom(F3DGfx** cmd0) {
     (*cmd0)++;
     uint64_t hash = ((uint64_t)(*cmd0)->words.w0 << 32) + (uint64_t)(*cmd0)->words.w1;
 
-    const char* fileName = nullptr;
+    const char* fileName = sResourceManager->GetArchiveManager()->HashToCString(hash);
     uint32_t texFlags = 0;
     RawTexMetadata rawTexMetadata = {};
 
-    std::shared_ptr<Fast::Texture> texture = TextureByHash(hash, &fileName);
     if (fileName == nullptr) {
         (*cmd0)++;
         return false;
     }
 
+    std::shared_ptr<Fast::Texture> texture = std::static_pointer_cast<Fast::Texture>(
+        sResourceManager->LoadResourceProcess(sResourceManager->GetArchiveManager()->HashToCString(hash)));
     if (texture != nullptr) {
         texFlags = texture->Flags;
         rawTexMetadata.width = texture->Width;
@@ -5929,13 +5869,6 @@ bool Interpreter::ViewportMatchesRendererResolution() {
 }
 
 void Interpreter::StartFrame() {
-#ifdef FAST3D_PROFILE
-    static uint32_t hashCacheFrame = 0;
-    if (++hashCacheFrame % 300 == 0) {
-        sHashedResources.clear();
-        sHashedTextures.clear();
-    }
-#endif
     mWapi->GetDimensions(&mGfxCurrentWindowDimensions.width, &mGfxCurrentWindowDimensions.height, &mCurWindowPosX,
                          &mCurWindowPosY);
     if (mCurDimensions.height == 0) {

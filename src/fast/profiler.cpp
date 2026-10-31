@@ -119,7 +119,6 @@ const CycleStep kCycle[] = {
     { "no_fog", [](Experiments& e) { e.no_fog = 1; } },
     { "point_filter", [](Experiments& e) { e.point_filter = 1; } },
     { "measure_gpu", [](Experiments& e) { e.measure_gpu = 1; } },
-    { "hash_cache", [](Experiments& e) { e.hash_cache = 1; } },
     { "swap_interval=1", [](Experiments& e) { e.swap_interval = 1; } },
 };
 constexpr int kFixedExperiments = sizeof(kCycle) / sizeof(kCycle[0]) - 1;
@@ -208,7 +207,6 @@ void PrintExperiments() {
     SHOW("no_depth", no_depth, "%d")
     SHOW("no_fog", no_fog, "%d")
     SHOW("measure_gpu", measure_gpu, "%d")
-    SHOW("hash_cache", hash_cache, "%d")
     SHOW("swap_interval", swap_interval, "%d")
     for (int i = 0; i < Experiments::kUserExperiments; i++) {
         if (gExp.user[i]) {
@@ -333,11 +331,15 @@ bool SetExperiment(const char* name, double value) {
         float* f;
     };
     const Entry entries[] = {
-        { "skip_tris", &gExp.skip_tris, nullptr },   { "tri_limit", &gExp.tri_limit, nullptr },
-        { "skip_draw", &gExp.skip_draw, nullptr },   { "point_filter", &gExp.point_filter, nullptr },
-        { "no_blend", &gExp.no_blend, nullptr },     { "no_depth", &gExp.no_depth, nullptr },
-        { "no_fog", &gExp.no_fog, nullptr },         { "measure_gpu", &gExp.measure_gpu, nullptr },
-        { "hash_cache", &gExp.hash_cache, nullptr }, { "swap_interval", &gExp.swap_interval, nullptr },
+        { "skip_tris", &gExp.skip_tris, nullptr },
+        { "tri_limit", &gExp.tri_limit, nullptr },
+        { "skip_draw", &gExp.skip_draw, nullptr },
+        { "point_filter", &gExp.point_filter, nullptr },
+        { "no_blend", &gExp.no_blend, nullptr },
+        { "no_depth", &gExp.no_depth, nullptr },
+        { "no_fog", &gExp.no_fog, nullptr },
+        { "measure_gpu", &gExp.measure_gpu, nullptr },
+        { "swap_interval", &gExp.swap_interval, nullptr },
         { "res", nullptr, &gExp.resolution },
     };
     for (int i = 0; i < Experiments::kUserExperiments; i++) {

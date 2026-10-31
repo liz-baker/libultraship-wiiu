@@ -99,7 +99,6 @@ struct Experiments {
     int no_blend = 0;      // never enable alpha blending
     int no_depth = 0;      // never enable depth test or mask
     int no_fog = 0;        // drop fog from every shader
-    int hash_cache = 0;    // remember the resources the *_OTR_HASH display-list commands look up
     int measure_gpu = 0;   // wait for the GPU after the display list, so GPU_SYNC shows its time
     int swap_interval = 0; // override the swap interval (1 = every vsync) on Wii U
     // Switches the game defines and names (SetUserExperimentName); they join the cycle.
