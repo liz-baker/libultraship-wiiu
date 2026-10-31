@@ -13,6 +13,8 @@
 #include <padscore/kpad.h>
 #include <padscore/wpad.h>
 
+#include <spdlog/spdlog.h>
+
 namespace Ship {
 namespace WiiU {
 
@@ -23,6 +25,14 @@ static VPADStatus vpadStatus;
 static bool hasKpad[4] = { false };
 static KPADError kpadError[4] = { KPAD_ERROR_OK };
 static KPADStatus kpadStatus[4];
+
+// A poll that returns no new sample is normal, and reporting the device as unplugged for it makes
+// the game route its controllers again (a stall of seconds on the SD card, which makes the next
+// poll miss as well). A device counts as gone only after this many polls in a row without one,
+// about half a second at 60 frames a second; until then its last status stands.
+static constexpr int kMissedPollsBeforeLost = 30;
+static int vpadMissed = 0;
+static int kpadMissed[4] = { 0 };
 
 #ifdef _DEBUG
 extern "C" {
@@ -100,29 +110,54 @@ void ThrowInvalidOTR() {
 
 void Update() {
     // Gamepad / DRC
+    VPADStatus vpadFresh;
     VPADReadError err;
-    int32_t read = VPADRead(VPAD_CHAN_0, &vpadStatus, 1, &err);
+    const int32_t read = VPADRead(VPAD_CHAN_0, &vpadFresh, 1, &err);
     vpadError = err;
-    hasVpad = (read > 0 && err == VPAD_READ_SUCCESS);
+    if (read > 0 && err == VPAD_READ_SUCCESS) {
+        vpadStatus = vpadFresh;
+        if (!hasVpad) {
+            SPDLOG_INFO("Wii U: the GamePad is connected");
+        }
+        hasVpad = true;
+        vpadMissed = 0;
+    } else if (hasVpad && ++vpadMissed >= kMissedPollsBeforeLost) {
+        SPDLOG_WARN("Wii U: the GamePad is lost: no sample for {} polls (last read {}, error {})", vpadMissed, read,
+                    static_cast<int>(err));
+        hasVpad = false;
+    }
 
     // Wii Remotes / Pro Controllers on the four KPAD channels
     for (int chan = 0; chan < 4; chan++) {
+        KPADStatus kpadFresh;
         KPADError kerr = KPAD_ERROR_OK;
-        int32_t kread = KPADReadEx((KPADChan)chan, &kpadStatus[chan], 1, &kerr);
+        const int32_t kread = KPADReadEx((KPADChan)chan, &kpadFresh, 1, &kerr);
         kpadError[chan] = kerr;
-        hasKpad[chan] = (kread > 0 && kerr == KPAD_ERROR_OK);
+        if (kread > 0 && kerr == KPAD_ERROR_OK) {
+            kpadStatus[chan] = kpadFresh;
+            if (!hasKpad[chan]) {
+                SPDLOG_INFO("Wii U: channel {} is connected", chan);
+            }
+            hasKpad[chan] = true;
+            kpadMissed[chan] = 0;
+        } else if (hasKpad[chan] && ++kpadMissed[chan] >= kMissedPollsBeforeLost) {
+            SPDLOG_WARN("Wii U: channel {} is lost: no sample for {} polls (last read {}, error {})", chan,
+                        kpadMissed[chan], kread, static_cast<int>(kerr));
+            hasKpad[chan] = false;
+        }
     }
 
     UpdateRumble();
 }
 
 VPADStatus* GetVPADStatus(VPADReadError* error) {
-    *error = vpadError;
+    // Within the grace period the last good status is what is reported, as a success.
+    *error = hasVpad ? VPAD_READ_SUCCESS : vpadError;
     return hasVpad ? &vpadStatus : nullptr;
 }
 
 KPADStatus* GetKPADStatus(WPADChan chan, KPADError* error) {
-    *error = kpadError[chan];
+    *error = hasKpad[chan] ? KPAD_ERROR_OK : kpadError[chan];
     return hasKpad[chan] ? &kpadStatus[chan] : nullptr;
 }
 
