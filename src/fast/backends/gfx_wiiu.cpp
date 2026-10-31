@@ -29,6 +29,7 @@
 #include <padscore/kpad.h>
 
 #include "fast/backends/gfx_wiiu.h"
+#include "fast/profiler.h"
 #include "fast/Fast3dGui.h"
 
 #include "ship/port/wiiu/ImGui/imgui_impl_wiiu.h"
@@ -482,6 +483,11 @@ void GfxWindowBackendWiiU::SetTargetFps(int fps) {
     if (divisor < 1) {
         divisor = 1;
     }
+#ifdef FAST3D_PROFILE
+    if (PROF_EXP(swap_interval) > 0) {
+        divisor = PROF_EXP(swap_interval);
+    }
+#endif
 
     if (frame_divisor != divisor) {
         GX2SetSwapInterval(divisor);

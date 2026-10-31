@@ -1,3 +1,4 @@
+#include "fast/profiler.h"
 #include "fast/Fast3dWindow.h"
 
 #include "ship/core/Context.h"
@@ -246,8 +247,17 @@ bool Fast3dWindow::IsFrameReady() {
 }
 
 bool Fast3dWindow::DrawAndRunGraphicsCommands(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtxReplacements) {
+#ifdef FAST3D_PROFILE
+    Fast::Prof::FrameBegin();
+#endif
     // Skip dropped frames
-    if (!IsFrameReady()) {
+    bool ready;
+    {
+        PROF_SCOPE(FRAME_READY);
+        ready = IsFrameReady();
+    }
+    if (!ready) {
+        PROF_COUNT(DROPPED_FRAMES);
         return false;
     }
 
@@ -255,13 +265,19 @@ bool Fast3dWindow::DrawAndRunGraphicsCommands(Gfx* commands, const std::unordere
     // Setup mouse state manager
     GetMouseStateManager()->StartFrame();
     // Setup of the backend frames and draw initial Window and GUI menus
-    gui->StartDraw();
+    {
+        PROF_SCOPE(GUI);
+        gui->StartDraw();
+    }
     // Setup game framebuffers to match available window space
     mInterpreter->StartFrame();
     // Execute the games gfx commands
     mInterpreter->Run(commands, mtxReplacements);
     // Renders the game frame buffer to the final window and finishes the GUI
-    gui->EndDraw();
+    {
+        PROF_SCOPE(GUI);
+        gui->EndDraw();
+    }
     // Finalize swap buffers
     mInterpreter->EndFrame();
 

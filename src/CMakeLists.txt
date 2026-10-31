@@ -202,6 +202,10 @@ if(COMPONENT_THREAD_SAFE)
     target_compile_definitions(libultraship PUBLIC COMPONENT_THREAD_SAFE)
 endif()
 
+if(FAST3D_PROFILE)
+    target_compile_definitions(libultraship PUBLIC FAST3D_PROFILE)
+endif()
+
 if(FAST3D_OTR_HASH_CACHE)
     target_compile_definitions(libultraship PRIVATE FAST3D_OTR_HASH_CACHE)
 endif()
