@@ -206,6 +206,10 @@ if(FAST3D_PROFILE)
     target_compile_definitions(libultraship PUBLIC FAST3D_PROFILE)
 endif()
 
+if(FAST3D_OTR_HASH_CACHE)
+    target_compile_definitions(libultraship PRIVATE FAST3D_OTR_HASH_CACHE)
+endif()
+
 target_compile_definitions(libultraship PRIVATE ${GBI_UCODE})
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
