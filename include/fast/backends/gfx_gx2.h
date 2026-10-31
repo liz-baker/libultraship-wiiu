@@ -74,6 +74,9 @@ class GfxRenderingAPIGX2 final : public GfxRenderingAPI {
     void StartFrame() override;
     void EndFrame() override;
     void FinishRender() override;
+#ifdef FAST3D_PROFILE
+    void WaitForGpu() override;
+#endif
     int CreateFramebuffer() override;
     void UpdateFramebufferParameters(int fb_id, uint32_t width, uint32_t height, uint32_t msaa_level,
                                      bool opengl_invertY, bool render_target, bool has_depth_buffer,

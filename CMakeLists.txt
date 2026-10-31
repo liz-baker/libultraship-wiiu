@@ -13,6 +13,7 @@ option(COMPONENT_THREAD_SAFE "Enable thread safety for Component parent/child li
 option(DISABLE_DLL_LOADER "Disable dynamic library loading support" OFF)
 option(ENABLE_SCRIPTING "Enable TCC-based C mod compilation and scripting system" OFF)
 option(ENABLE_TCC_COMPILER "Build the TCC compiler for compiling mod C sources at runtime (OFF = prebuilt mod binaries only)" ON)
+option(FAST3D_PROFILE "Per-frame stage timers, counters and experiment switches in the renderer (debug aid)" OFF)
 option(FAST3D_OTR_HASH_CACHE "Remember the resources the hash display-list commands look up, instead of resolving them on every call" OFF)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
