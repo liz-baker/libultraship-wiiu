@@ -384,3 +384,7 @@ docs/doxygen/Gemfile.lock
 tests/**/*.cmake
 tests/**/*.json
 tests/**/*.exe
+
+# Claude Code: agent worktrees and per-user settings
+.claude/worktrees/
+.claude/settings.local.json
